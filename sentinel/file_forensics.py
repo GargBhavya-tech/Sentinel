@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -43,27 +42,28 @@ log = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-ENTROPY_WINDOW      = 256      # bytes per sliding window
-ENTROPY_THRESHOLD   = 7.2      # bits/byte — above this = suspicious
-MIN_PAYLOAD_BYTES   = 8        # ignore trailing whitespace / padding < this
-XOR_KEY             = 0x42     # demo artifact XOR key (arbitrary; documented)
+ENTROPY_WINDOW = 256  # bytes per sliding window
+ENTROPY_THRESHOLD = 7.2  # bits/byte — above this = suspicious
+MIN_PAYLOAD_BYTES = 8  # ignore trailing whitespace / padding < this
+XOR_KEY = 0x42  # demo artifact XOR key (arbitrary; documented)
 
 
 # ── Data types ────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class EntropyAnomaly:
-    offset: int          # byte offset of the window start
-    entropy: float       # measured Shannon entropy (bits/byte)
-    snippet_hex: str     # first 16 bytes as hex (for the UI card)
+    offset: int  # byte offset of the window start
+    entropy: float  # measured Shannon entropy (bits/byte)
+    snippet_hex: str  # first 16 bytes as hex (for the UI card)
 
 
 @dataclass
 class HiddenPayload:
-    offset: int                     # byte offset where the payload starts
-    raw_bytes: bytes                # raw extracted bytes
-    decoded: Optional[str] = None   # XOR-decoded text if printable
-    encoding: str = "raw"           # "raw" | "xor-0xNN"
+    offset: int  # byte offset where the payload starts
+    raw_bytes: bytes  # raw extracted bytes
+    decoded: Optional[str] = None  # XOR-decoded text if printable
+    encoding: str = "raw"  # "raw" | "xor-0xNN"
 
     @property
     def preview(self) -> str:
@@ -95,17 +95,18 @@ class ForensicsResult:
 # ── EOF marker lookup ─────────────────────────────────────────────────────────
 
 _EOF_MARKERS: dict[str, list[bytes]] = {
-    ".pdf":  [b"%%EOF", b"%%EOF\r", b"%%EOF\n", b"%%EOF\r\n"],
-    ".png":  [b"\x00\x00\x00\x00IEND\xaeB`\x82"],   # IEND chunk with CRC
-    ".jpg":  [b"\xff\xd9"],
+    ".pdf": [b"%%EOF", b"%%EOF\r", b"%%EOF\n", b"%%EOF\r\n"],
+    ".png": [b"\x00\x00\x00\x00IEND\xaeB`\x82"],  # IEND chunk with CRC
+    ".jpg": [b"\xff\xd9"],
     ".jpeg": [b"\xff\xd9"],
-    ".zip":  [b"PK\x05\x06"],   # end-of-central-directory signature
+    ".zip": [b"PK\x05\x06"],  # end-of-central-directory signature
     ".docx": [b"PK\x05\x06"],
     ".xlsx": [b"PK\x05\x06"],
 }
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
+
 
 def scan(file_path: str | Path) -> ForensicsResult:
     """Run the full forensic pre-pass on a file.
@@ -138,9 +139,7 @@ def scan(file_path: str | Path) -> ForensicsResult:
     result.suspicious = bool(result.entropy_anomalies or result.hidden_payloads)
 
     if result.suspicious:
-        log.warning(
-            "forensics: SUSPICIOUS — %s — %s", path.name, result.summary
-        )
+        log.warning("forensics: SUSPICIOUS — %s — %s", path.name, result.summary)
     else:
         log.info("forensics: clean — %s", path.name)
 
@@ -148,6 +147,7 @@ def scan(file_path: str | Path) -> ForensicsResult:
 
 
 # ── Entropy scanner ───────────────────────────────────────────────────────────
+
 
 def _shannon_entropy(data: bytes) -> float:
     """Shannon entropy in bits/byte for a byte sequence."""
@@ -167,7 +167,7 @@ def _shannon_entropy(data: bytes) -> float:
 
 def _scan_entropy(data: bytes, result: ForensicsResult) -> None:
     """Slide a window over the file and record high-entropy regions."""
-    step = ENTROPY_WINDOW // 2   # 50 % overlap
+    step = ENTROPY_WINDOW // 2  # 50 % overlap
     for offset in range(0, len(data) - ENTROPY_WINDOW, step):
         window = data[offset : offset + ENTROPY_WINDOW]
         entropy = _shannon_entropy(window)
@@ -178,9 +178,7 @@ def _scan_entropy(data: bytes, result: ForensicsResult) -> None:
                 snippet_hex=window[:16].hex(),
             )
             result.entropy_anomalies.append(anomaly)
-            result.source_pointers.append(
-                f"{result.file_path}#entropy_window@{offset}"
-            )
+            result.source_pointers.append(f"{result.file_path}#entropy_window@{offset}")
     # Deduplicate adjacent windows (only keep the local max per region)
     if result.entropy_anomalies:
         result.entropy_anomalies = _dedup_anomalies(result.entropy_anomalies, step)
@@ -200,9 +198,8 @@ def _dedup_anomalies(
 
 # ── Post-EOF payload scanner ──────────────────────────────────────────────────
 
-def _scan_eof(
-    data: bytes, ext: str, result: ForensicsResult, label: str
-) -> None:
+
+def _scan_eof(data: bytes, ext: str, result: ForensicsResult, label: str) -> None:
     """Find the last occurrence of known EOF markers and inspect what follows."""
     markers = _EOF_MARKERS.get(ext, [])
     if not markers:
@@ -210,7 +207,7 @@ def _scan_eof(
 
     best_pos = -1
     for marker in markers:
-        pos = data.rfind(marker)   # last occurrence
+        pos = data.rfind(marker)  # last occurrence
         if pos != -1:
             candidate = pos + len(marker)
             if candidate > best_pos:
@@ -247,7 +244,10 @@ def _scan_eof(
 
 # ── Demo artifact factory ─────────────────────────────────────────────────────
 
-def make_demo_artifact(dest: str | Path, message: str = "SENTINEL_DEMO_PAYLOAD") -> Path:
+
+def make_demo_artifact(
+    dest: str | Path, message: str = "SENTINEL_DEMO_PAYLOAD"
+) -> Path:
     """Create a minimal valid PDF with a XOR-obfuscated payload after %%EOF.
 
     This is the #5 build-map demo artifact — a file that is structurally a
@@ -286,5 +286,7 @@ startxref
     hidden = bytes(b ^ XOR_KEY for b in message.encode("utf-8"))
 
     path.write_bytes(pdf_body + hidden)
-    log.info("forensics: demo artifact written → %s (%d bytes)", path, path.stat().st_size)
+    log.info(
+        "forensics: demo artifact written → %s (%d bytes)", path, path.stat().st_size
+    )
     return path

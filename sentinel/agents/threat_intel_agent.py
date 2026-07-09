@@ -30,7 +30,6 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
 
 from ..claims import Claim
@@ -40,7 +39,7 @@ log = logging.getLogger(__name__)
 # ── Cache ─────────────────────────────────────────────────────────────────────
 
 _MEMORY_CACHE: dict[str, dict] = {}
-_CACHE_TTL_SECONDS = 3600 * 24   # 24 hours
+_CACHE_TTL_SECONDS = 3600 * 24  # 24 hours
 
 _DEMO_SEED: dict[str, dict] = {
     # A known-bad domain for demo purposes
@@ -49,7 +48,7 @@ _DEMO_SEED: dict[str, dict] = {
         "vt_malicious": 8,
         "vt_suspicious": 3,
         "registrar": "NameCheap Inc.",
-        "cached_at": 0,     # always "fresh" in demo
+        "cached_at": 0,  # always "fresh" in demo
     },
     # A known-good domain
     "acmecorp.com": {
@@ -64,7 +63,7 @@ _DEMO_SEED: dict[str, dict] = {
 
 def seed_cache(domain: str, data: dict) -> None:
     """Seed the in-memory cache for testing / demo pre-loads."""
-    data.setdefault("cached_at", 0)   # 0 = never expires
+    data.setdefault("cached_at", 0)  # 0 = never expires
     _MEMORY_CACHE[domain.lower()] = data
 
 
@@ -92,6 +91,7 @@ def _put_cache(domain: str, data: dict) -> None:
 
 
 # ── Result ─────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class ThreatIntelResult:
@@ -125,6 +125,7 @@ class ThreatIntelResult:
 
 
 # ── Main entry point ───────────────────────────────────────────────────────────
+
 
 def analyze(
     case_id: str,
@@ -179,10 +180,10 @@ def analyze(
 def _build_result(
     case_id: str, domain: str, data: dict, from_cache: bool
 ) -> ThreatIntelResult:
-    age     = data.get("domain_age_days")
-    vt_mal  = int(data.get("vt_malicious", 0))
-    vt_sus  = int(data.get("vt_suspicious", 0))
-    reg     = data.get("registrar")
+    age = data.get("domain_age_days")
+    vt_mal = int(data.get("vt_malicious", 0))
+    vt_sus = int(data.get("vt_suspicious", 0))
+    reg = data.get("registrar")
     flags: list[str] = []
     risk = 0.0
 
@@ -202,34 +203,44 @@ def _build_result(
 
     log.info(
         "threat_intel: case=%s domain=%s age=%s vt_mal=%d risk=%.3f cache=%s",
-        case_id, domain, age, vt_mal, risk, from_cache,
+        case_id,
+        domain,
+        age,
+        vt_mal,
+        risk,
+        from_cache,
     )
 
     return ThreatIntelResult(
-        case_id=case_id, domain=domain, domain_age_days=age,
-        vt_malicious=vt_mal, vt_suspicious=vt_sus,
-        registrar=reg, risk_score=risk,
-        from_cache=from_cache, flags=flags,
+        case_id=case_id,
+        domain=domain,
+        domain_age_days=age,
+        vt_malicious=vt_mal,
+        vt_suspicious=vt_sus,
+        registrar=reg,
+        risk_score=risk,
+        from_cache=from_cache,
+        flags=flags,
     )
 
 
 # ── Live lookup helpers ────────────────────────────────────────────────────────
 
+
 def _query_virustotal(domain: str, api_key: str) -> dict:
     """Query VirusTotal v3 API for a domain report."""
     try:
         import urllib.request
+
         url = f"https://www.virustotal.com/api/v3/domains/{domain}"
         req = urllib.request.Request(url, headers={"x-apikey": api_key})
         with urllib.request.urlopen(req, timeout=5) as resp:
             body = json.loads(resp.read())
         stats = (
-            body.get("data", {})
-            .get("attributes", {})
-            .get("last_analysis_stats", {})
+            body.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
         )
         return {
-            "vt_malicious":  int(stats.get("malicious", 0)),
+            "vt_malicious": int(stats.get("malicious", 0)),
             "vt_suspicious": int(stats.get("suspicious", 0)),
         }
     except Exception as e:
@@ -241,12 +252,14 @@ def _query_whois_age(domain: str) -> Optional[int]:
     """Return domain age in days using the whois library (optional)."""
     try:
         import whois  # type: ignore
+
         w = whois.whois(domain)
         created = w.creation_date
         if isinstance(created, list):
             created = created[0]
         if created:
             import datetime
+
             age = (datetime.datetime.now() - created).days
             return max(age, 0)
     except Exception:

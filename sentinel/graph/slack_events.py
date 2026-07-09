@@ -29,7 +29,11 @@ def register_graph_listeners(app: AsyncApp) -> None:
     async def on_message(event: dict, ack) -> None:
         await ack()
         # Subtype "message_deleted" / "message_changed" don't add nodes
-        if event.get("subtype") in ("message_deleted", "bot_message", "message_replied"):
+        if event.get("subtype") in (
+            "message_deleted",
+            "bot_message",
+            "message_replied",
+        ):
             return
         await ingest_event(event)
         log.debug("graph: ingested message event ts=%s", event.get("ts"))

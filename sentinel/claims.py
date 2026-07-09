@@ -39,7 +39,9 @@ class Contradiction:
     axis: str  # "visual_vs_structured" | "tone_vs_baseline" | "voice_vs_baseline" | "injection"
     detail: str  # human-readable explanation for the Slack card
     weight: float  # contribution to overall risk (0..1)
-    evidence: list[str] = field(default_factory=list)  # source_pointers -> click-to-source
+    evidence: list[str] = field(
+        default_factory=list
+    )  # source_pointers -> click-to-source
 
 
 @dataclass
@@ -49,7 +51,9 @@ class Verdict:
     risk: float  # 0..1
     verdict: str  # "FRAUD_LIKELY" | "REVIEW" | "CLEAR"
     contradictions: list[Contradiction] = field(default_factory=list)
-    counterfactual: Optional[str] = None  # "would be CLEAR if domain > 90d AND totals matched"
+    counterfactual: Optional[str] = (
+        None  # "would be CLEAR if domain > 90d AND totals matched"
+    )
 
     @property
     def is_flagged(self) -> bool:

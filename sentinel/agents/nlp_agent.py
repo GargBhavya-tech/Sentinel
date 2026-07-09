@@ -18,7 +18,6 @@ Output Claims
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -30,82 +29,136 @@ log = logging.getLogger(__name__)
 
 _LEXICON: dict[str, list[str]] = {
     "BEC": [
-        "wire transfer", "wire funds", "change bank", "new account",
-        "banking details", "payment details updated", "urgently transfer",
-        "cfo", "ceo request", "executive request", "strictly confidential",
-        "do not discuss", "keep this private", "on behalf of the ceo",
-        "direct transfer", "remit payment", "bypass approval",
+        "wire transfer",
+        "wire funds",
+        "change bank",
+        "new account",
+        "banking details",
+        "payment details updated",
+        "urgently transfer",
+        "cfo",
+        "ceo request",
+        "executive request",
+        "strictly confidential",
+        "do not discuss",
+        "keep this private",
+        "on behalf of the ceo",
+        "direct transfer",
+        "remit payment",
+        "bypass approval",
         # Hinglish / code-switched variants
-        "jaldi karo", "turant transfer", "abhi bhejo",
+        "jaldi karo",
+        "turant transfer",
+        "abhi bhejo",
     ],
     "INVOICE": [
-        "invoice attached", "payment overdue", "final notice",
-        "account past due", "late fee", "collection agency",
-        "legal action", "settlement required", "pay now", "immediate payment",
-        "outstanding balance", "unpaid invoice", "past due balance",
+        "invoice attached",
+        "payment overdue",
+        "final notice",
+        "account past due",
+        "late fee",
+        "collection agency",
+        "legal action",
+        "settlement required",
+        "pay now",
+        "immediate payment",
+        "outstanding balance",
+        "unpaid invoice",
+        "past due balance",
         "your payment has not been received",
     ],
     "ROMANCE": [
-        "i love you", "my darling", "send me money", "western union",
-        "stuck in customs", "investment opportunity", "cryptocurrency",
-        "i need your help", "fell in love", "soulmate",
-        "military officer", "doctor abroad", "stranded",
+        "i love you",
+        "my darling",
+        "send me money",
+        "western union",
+        "stuck in customs",
+        "investment opportunity",
+        "cryptocurrency",
+        "i need your help",
+        "fell in love",
+        "soulmate",
+        "military officer",
+        "doctor abroad",
+        "stranded",
     ],
     "ADVANCE_FEE": [
-        "inheritance", "lottery", "selected beneficiary", "unclaimed funds",
-        "million dollars", "transfer fee", "administrative fee",
-        "secret funds", "diplomat", "box of money", "release fee",
-        "nigerian prince",   # yes, still used
+        "inheritance",
+        "lottery",
+        "selected beneficiary",
+        "unclaimed funds",
+        "million dollars",
+        "transfer fee",
+        "administrative fee",
+        "secret funds",
+        "diplomat",
+        "box of money",
+        "release fee",
+        "nigerian prince",  # yes, still used
     ],
     "PHISHING": [
-        "verify your account", "click the link", "your account will be suspended",
-        "confirm your details", "update your password", "unusual activity",
-        "login attempt", "reset your password", "account compromised",
-        "verify identity", "suspended account",
+        "verify your account",
+        "click the link",
+        "your account will be suspended",
+        "confirm your details",
+        "update your password",
+        "unusual activity",
+        "login attempt",
+        "reset your password",
+        "account compromised",
+        "verify identity",
+        "suspended account",
     ],
     "VISHING": [
-        "press 1 to speak", "call this number immediately",
-        "irs agent", "tax authority", "arrest warrant", "social security",
-        "your ssn has been suspended", "police department",
-        "fraud department", "last warning call",
+        "press 1 to speak",
+        "call this number immediately",
+        "irs agent",
+        "tax authority",
+        "arrest warrant",
+        "social security",
+        "your ssn has been suspended",
+        "police department",
+        "fraud department",
+        "last warning call",
     ],
 }
 
 _URGENCY_PHRASES: list[tuple[str, float]] = [
-    ("immediately",          0.20),
-    ("urgent",               0.20),
-    ("asap",                 0.15),
-    ("as soon as possible",  0.15),
-    ("right now",            0.20),
-    ("today only",           0.25),
-    ("deadline",             0.10),
-    ("last chance",          0.25),
-    ("do not delay",         0.20),
-    ("time-sensitive",       0.20),
-    ("within the hour",      0.30),
-    ("within 24 hours",      0.15),
-    ("before end of day",    0.15),
-    ("eod",                  0.10),
-    ("final notice",         0.25),
-    ("do not tell anyone",   0.35),
-    ("keep this secret",     0.35),
-    ("confidential",         0.10),
+    ("immediately", 0.20),
+    ("urgent", 0.20),
+    ("asap", 0.15),
+    ("as soon as possible", 0.15),
+    ("right now", 0.20),
+    ("today only", 0.25),
+    ("deadline", 0.10),
+    ("last chance", 0.25),
+    ("do not delay", 0.20),
+    ("time-sensitive", 0.20),
+    ("within the hour", 0.30),
+    ("within 24 hours", 0.15),
+    ("before end of day", 0.15),
+    ("eod", 0.10),
+    ("final notice", 0.25),
+    ("do not tell anyone", 0.35),
+    ("keep this secret", 0.35),
+    ("confidential", 0.10),
     # Code-switched
-    ("jaldi",                0.20),
-    ("turant",               0.20),
+    ("jaldi", 0.20),
+    ("turant", 0.20),
 ]
 
 
 # ── Result ─────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class NLPResult:
     case_id: str
     scam_type: str
-    scam_confidence: float      # 0..1 probability-like score
-    urgency: float              # 0..1 urgency pressure
+    scam_confidence: float  # 0..1 probability-like score
+    urgency: float  # 0..1 urgency pressure
     matched_keywords: list[str] = field(default_factory=list)
-    urgency_phrases: list[str]  = field(default_factory=list)
+    urgency_phrases: list[str] = field(default_factory=list)
 
     def to_claims(self) -> list[Claim]:
         return [
@@ -127,6 +180,7 @@ class NLPResult:
 
 
 # ── Main entry point ───────────────────────────────────────────────────────────
+
 
 def analyze(
     case_id: str,
@@ -173,7 +227,10 @@ def analyze(
 
     log.info(
         "nlp: case=%s scam_type=%s conf=%.3f urgency=%.3f",
-        case_id, best_type, best_score, urgency,
+        case_id,
+        best_type,
+        best_score,
+        urgency,
     )
 
     return NLPResult(

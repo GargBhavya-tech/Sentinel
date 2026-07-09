@@ -22,33 +22,63 @@ def extract_claims(case_id: str, m: dict[str, Any]) -> list[Claim]:
     claims: list[Claim] = []
 
     if "visual_total" in m:
-        claims.append(Claim(
-            field="visual_total", value=float(m["visual_total"]), confidence=0.95,
-            source_pointer=f"{case_id}/invoice.png#bbox=[410,980,120,40]", agent="vision",
-        ))
+        claims.append(
+            Claim(
+                field="visual_total",
+                value=float(m["visual_total"]),
+                confidence=0.95,
+                source_pointer=f"{case_id}/invoice.png#bbox=[410,980,120,40]",
+                agent="vision",
+            )
+        )
     if "structured_total" in m:
-        claims.append(Claim(
-            field="structured_total", value=float(m["structured_total"]), confidence=0.99,
-            source_pointer=f"{case_id}/data.csv#R14C3", agent="finance",
-        ))
+        claims.append(
+            Claim(
+                field="structured_total",
+                value=float(m["structured_total"]),
+                confidence=0.99,
+                source_pointer=f"{case_id}/data.csv#R14C3",
+                agent="finance",
+            )
+        )
     if "tone_anomaly" in m:
-        claims.append(Claim(
-            field="tone_anomaly", value=float(m["tone_anomaly"]), confidence=0.80,
-            source_pointer=f"{case_id}/message.txt#stylometry", agent="stylometric",
-        ))
+        claims.append(
+            Claim(
+                field="tone_anomaly",
+                value=float(m["tone_anomaly"]),
+                confidence=0.80,
+                source_pointer=f"{case_id}/message.txt#stylometry",
+                agent="stylometric",
+            )
+        )
     if "voice_mismatch" in m:
-        claims.append(Claim(
-            field="voice_mismatch", value=float(m["voice_mismatch"]), confidence=0.75,
-            source_pointer=f"{case_id}/voicenote.wav#antispoof", agent="voice",
-        ))
+        claims.append(
+            Claim(
+                field="voice_mismatch",
+                value=float(m["voice_mismatch"]),
+                confidence=0.75,
+                source_pointer=f"{case_id}/voicenote.wav#antispoof",
+                agent="voice",
+            )
+        )
     if "domain_age_days" in m:
-        claims.append(Claim(
-            field="domain_age_days", value=int(m["domain_age_days"]), confidence=0.99,
-            source_pointer=f"{case_id}/whois", agent="threat_intel",
-        ))
+        claims.append(
+            Claim(
+                field="domain_age_days",
+                value=int(m["domain_age_days"]),
+                confidence=0.99,
+                source_pointer=f"{case_id}/whois",
+                agent="threat_intel",
+            )
+        )
     if m.get("injection_present"):
-        claims.append(Claim(
-            field="injection_present", value=True, confidence=0.99,
-            source_pointer=f"{case_id}/invoice.png#hidden_text", agent="injection_scanner",
-        ))
+        claims.append(
+            Claim(
+                field="injection_present",
+                value=True,
+                confidence=0.99,
+                source_pointer=f"{case_id}/invoice.png#hidden_text",
+                agent="injection_scanner",
+            )
+        )
     return claims

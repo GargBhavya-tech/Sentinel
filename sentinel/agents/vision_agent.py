@@ -43,18 +43,19 @@ from ..pii_gateway import PIIRegistry, redact
 log = logging.getLogger(__name__)
 
 # ── Layout heuristic thresholds ───────────────────────────────────────────────
-_MIN_VENDOR_LINE_LEN   = 3    # vendor name should be ≥ 3 chars
-_MIN_TOTAL_AMOUNT      = 1.0  # anything < $1 is suspicious
-_MAX_LINE_COUNT        = 500  # a single-page invoice should not exceed this
+_MIN_VENDOR_LINE_LEN = 3  # vendor name should be ≥ 3 chars
+_MIN_TOTAL_AMOUNT = 1.0  # anything < $1 is suspicious
+_MAX_LINE_COUNT = 500  # a single-page invoice should not exceed this
 
 
 # ── Result types ──────────────────────────────────────────────────────────────
+
 
 @dataclass
 class LayoutFlag:
     name: str
     detail: str
-    severity: float   # 0..1
+    severity: float  # 0..1
 
 
 @dataclass
@@ -72,41 +73,49 @@ class VisionResult:
         claims: list[Claim] = []
 
         if self.visual_total is not None:
-            claims.append(Claim(
-                field="visual_total",
-                value=self.visual_total,
-                confidence=0.95 if self.visual_total > 0 else 0.50,
-                source_pointer=self.source_pointers[0] if self.source_pointers
-                               else f"{self.case_id}/document#ocr",
-                agent="vision",
-            ))
+            claims.append(
+                Claim(
+                    field="visual_total",
+                    value=self.visual_total,
+                    confidence=0.95 if self.visual_total > 0 else 0.50,
+                    source_pointer=self.source_pointers[0]
+                    if self.source_pointers
+                    else f"{self.case_id}/document#ocr",
+                    agent="vision",
+                )
+            )
 
         if self.layout_flags:
             anomaly_score = min(
                 sum(f.severity for f in self.layout_flags) / len(self.layout_flags),
                 1.0,
             )
-            claims.append(Claim(
-                field="layout_anomaly",
-                value=anomaly_score,
-                confidence=0.80,
-                source_pointer=f"{self.case_id}/document#layout",
-                agent="vision",
-            ))
+            claims.append(
+                Claim(
+                    field="layout_anomaly",
+                    value=anomaly_score,
+                    confidence=0.80,
+                    source_pointer=f"{self.case_id}/document#layout",
+                    agent="vision",
+                )
+            )
 
         if self.injection_detected:
-            claims.append(Claim(
-                field="injection_present",
-                value=True,
-                confidence=0.99,
-                source_pointer=f"{self.case_id}/document#ocr_injection",
-                agent="vision",
-            ))
+            claims.append(
+                Claim(
+                    field="injection_present",
+                    value=True,
+                    confidence=0.99,
+                    source_pointer=f"{self.case_id}/document#ocr_injection",
+                    agent="vision",
+                )
+            )
 
         return claims
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
+
 
 def analyze(
     case_id: str,
@@ -158,8 +167,10 @@ def analyze(
         elif ext in (".png", ".jpg", ".jpeg", ".tiff", ".bmp"):
             text = _extract_image_text(path)
         else:
-            log.warning("vision: unsupported file type %s — text extraction skipped", ext)
-    
+            log.warning(
+                "vision: unsupported file type %s — text extraction skipped", ext
+            )
+
     if not text:
         log.warning("vision: no text extracted for case %s", case_id)
         return VisionResult(case_id=case_id, raw_text="", visual_total=None)
@@ -182,7 +193,10 @@ def analyze(
 
     log.info(
         "vision: case=%s total=%.2f flags=%d injection=%s",
-        case_id, visual_total or 0.0, len(flags), inj_result.detected,
+        case_id,
+        visual_total or 0.0,
+        len(flags),
+        inj_result.detected,
     )
 
     return VisionResult(
@@ -199,10 +213,12 @@ def analyze(
 
 # ── Text extraction ───────────────────────────────────────────────────────────
 
+
 def _extract_pdf_text(path: Path) -> str:
     """Extract text from a PDF using pdfminer.six (no binary required)."""
     try:
         from pdfminer.high_level import extract_text  # type: ignore
+
         text = extract_text(str(path))
         log.info("vision: pdfminer extracted %d chars from %s", len(text), path.name)
         return text
@@ -218,6 +234,7 @@ def _extract_image_text(path: Path) -> str:
     try:
         import pytesseract  # type: ignore
         from PIL import Image  # type: ignore
+
         img = Image.open(path)
         text = pytesseract.image_to_string(img)
         log.info("vision: tesseract extracted %d chars from %s", len(text), path.name)
@@ -284,17 +301,20 @@ def _parse_amount(s: str) -> Optional[float]:
 
 # ── Layout analysis ───────────────────────────────────────────────────────────
 
+
 def _layout_analysis(text: str, total: Optional[float]) -> list[LayoutFlag]:
     flags: list[LayoutFlag] = []
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
 
     # Flag: suspiciously few lines (≤ 3 lines — possibly stripped/minimal)
     if len(lines) <= 3:
-        flags.append(LayoutFlag(
-            name="minimal_content",
-            detail=f"Only {len(lines)} non-empty lines — document may be stripped",
-            severity=0.4,
-        ))
+        flags.append(
+            LayoutFlag(
+                name="minimal_content",
+                detail=f"Only {len(lines)} non-empty lines — document may be stripped",
+                severity=0.4,
+            )
+        )
 
     # Flag: no vendor identifier found
     has_vendor = any(
@@ -302,43 +322,49 @@ def _layout_analysis(text: str, total: Optional[float]) -> list[LayoutFlag]:
         for kw in ("vendor", "from:", "bill from", "invoice from", "seller", "company")
     )
     if not has_vendor:
-        flags.append(LayoutFlag(
-            name="missing_vendor",
-            detail="No vendor/seller identifier found in document",
-            severity=0.5,
-        ))
+        flags.append(
+            LayoutFlag(
+                name="missing_vendor",
+                detail="No vendor/seller identifier found in document",
+                severity=0.5,
+            )
+        )
 
     # Flag: no invoice number
-    has_invoice_num = bool(re.search(
-        r"(?:invoice|inv|bill)\s*[#\-]?\s*\d+", text, re.IGNORECASE
-    ))
+    has_invoice_num = bool(
+        re.search(r"(?:invoice|inv|bill)\s*[#\-]?\s*\d+", text, re.IGNORECASE)
+    )
     if not has_invoice_num:
-        flags.append(LayoutFlag(
-            name="missing_invoice_number",
-            detail="No invoice number pattern found",
-            severity=0.3,
-        ))
+        flags.append(
+            LayoutFlag(
+                name="missing_invoice_number",
+                detail="No invoice number pattern found",
+                severity=0.3,
+            )
+        )
 
     # Flag: total is suspiciously round (e.g. exactly $50,000 — common in BEC)
     if total and total >= 10_000 and total == int(total):
-        flags.append(LayoutFlag(
-            name="suspiciously_round_total",
-            detail=f"Total ${total:,.0f} is a suspiciously round number",
-            severity=0.35,
-        ))
+        flags.append(
+            LayoutFlag(
+                name="suspiciously_round_total",
+                detail=f"Total ${total:,.0f} is a suspiciously round number",
+                severity=0.35,
+            )
+        )
 
     # Flag: multiple totals that might conflict (injection obfuscation)
-    all_amounts = re.findall(
-        r"\$\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)", text
-    )
+    all_amounts = re.findall(r"\$\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)", text)
     parsed = [_parse_amount(a) for a in all_amounts if _parse_amount(a)]
     parsed_filtered = [v for v in parsed if v and v >= _MIN_TOTAL_AMOUNT]
     unique_amounts = set(parsed_filtered)
     if len(unique_amounts) > 4:
-        flags.append(LayoutFlag(
-            name="conflicting_amounts",
-            detail=f"{len(unique_amounts)} distinct dollar amounts on one document",
-            severity=0.4,
-        ))
+        flags.append(
+            LayoutFlag(
+                name="conflicting_amounts",
+                detail=f"{len(unique_amounts)} distinct dollar amounts on one document",
+                severity=0.4,
+            )
+        )
 
     return flags

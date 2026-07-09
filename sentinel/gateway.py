@@ -41,11 +41,12 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ── deferred imports (need env loaded first) ──────────────────────────────────
-from sentinel.db import close_db_pool, get_db_pool
-from sentinel.db import repo
-from sentinel.graph.cache import get_graph_snapshot
-from sentinel.slack_app import app as bolt_app
-from sentinel.worker import investigate
+from sentinel.db import close_db_pool, get_db_pool  # noqa: E402
+from sentinel.db import repo  # noqa: E402
+from sentinel.graph.cache import get_graph_snapshot  # noqa: E402
+from sentinel.slack_app import app as bolt_app  # noqa: E402
+from sentinel.worker import investigate  # noqa: E402
+
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 @asynccontextmanager
@@ -57,6 +58,7 @@ async def lifespan(api: FastAPI):
     yield
     log.info("Sentinel gateway shutting down — closing DB pool…")
     await close_db_pool()
+
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 api = FastAPI(
@@ -71,6 +73,7 @@ handler = AsyncSlackRequestHandler(bolt_app)
 
 # ── Slack events endpoint ─────────────────────────────────────────────────────
 
+
 @api.post("/slack/events")
 async def slack_events(req: Request, background_tasks: BackgroundTasks) -> Response:
     """Receive Slack webhook, ACK < 5ms, queue background work.
@@ -84,9 +87,16 @@ async def slack_events(req: Request, background_tasks: BackgroundTasks) -> Respo
     bolt_resp = await handler.handle(req)
 
     # If it's an app_mention, fire the investigation out-of-band
-    body = await req.json() if req.headers.get("content-type") == "application/json" else {}
+    body = (
+        await req.json()
+        if req.headers.get("content-type") == "application/json"
+        else {}
+    )
     event = body.get("event", {})
-    if event.get("type") == "app_mention" and "investigate" in event.get("text", "").lower():
+    if (
+        event.get("type") == "app_mention"
+        and "investigate" in event.get("text", "").lower()
+    ):
         background_tasks.add_task(investigate, event)
         log.info("Investigation enqueued for ts=%s", event.get("ts"))
 
@@ -94,6 +104,7 @@ async def slack_events(req: Request, background_tasks: BackgroundTasks) -> Respo
 
 
 # ── REST endpoints ────────────────────────────────────────────────────────────
+
 
 @api.get("/health")
 async def health() -> dict:
@@ -108,6 +119,7 @@ async def get_case(case_id: str) -> dict:
     if case is None:
         raise HTTPException(status_code=404, detail=f"Case {case_id!r} not found")
     from dataclasses import asdict
+
     return asdict(case)
 
 
@@ -128,6 +140,7 @@ async def audit_verify() -> dict:
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "sentinel.gateway:api",
         host=os.getenv("HOST", "0.0.0.0"),

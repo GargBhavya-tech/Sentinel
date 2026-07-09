@@ -25,7 +25,6 @@ parallel via asyncio.gather(). The rest of the flow is unchanged.
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict
 from typing import Any
 
 import asyncio
@@ -39,7 +38,7 @@ from sentinel.agents import (
     voice_agent,
     threat_intel_agent,
     nlp_agent,
-    policy_agent
+    policy_agent,
 )
 from sentinel.claims import Claim
 
@@ -48,16 +47,20 @@ log = logging.getLogger(__name__)
 
 # ── Block Kit card builders ────────────────────────────────────────────────────
 
+
 def _verdict_emoji(verdict: str) -> str:
     return {
         "FRAUD_LIKELY": ":red_circle:",
         "REVIEW": ":large_yellow_circle:",
         "CLEAR": ":large_green_circle:",
+        "NEED_MORE_INFO": ":question:",
     }.get(verdict, ":white_circle:")
 
 
-def _build_verdict_card(case_id: str, verdict_obj) -> list[dict]:
-    """Assemble the Phase 0 verdict Block Kit card.
+def _build_verdict_card(
+    case_id: str, verdict_obj, red_team_defense: dict | None = None
+) -> list[dict]:
+    """Assemble the Phase 0/2 verdict Block Kit card.
 
     In Phase 2 this grows to include contradiction axes, voice waveform,
     blast-radius graph, and action buttons. For now it posts the core fields.
@@ -80,34 +83,60 @@ def _build_verdict_card(case_id: str, verdict_obj) -> list[dict]:
         },
     ]
 
+    if verdict_obj.verdict == "NEED_MORE_INFO":
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*{verdict_obj.counterfactual}*"},
+            }
+        )
+        blocks.append({"type": "divider"})
+        return blocks
+
     if verdict_obj.contradictions:
         lines = []
         for c in verdict_obj.contradictions:
             lines.append(f"• *{c.axis}* — {c.detail}")
-        blocks.append({
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": "*Contradiction axes fired:*\n" + "\n".join(lines),
-            },
-        })
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*Contradiction axes fired:*\n" + "\n".join(lines),
+                },
+            }
+        )
 
     if verdict_obj.counterfactual:
-        blocks.append({
-            "type": "context",
-            "elements": [
-                {
+        blocks.append(
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f":bulb: *Counterfactual:* {verdict_obj.counterfactual}",
+                    }
+                ],
+            }
+        )
+
+    if red_team_defense:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
                     "type": "mrkdwn",
-                    "text": f":bulb: *Counterfactual:* {verdict_obj.counterfactual}",
-                }
-            ],
-        })
+                    "text": f":shield: *Red Team Defense:*\n_{red_team_defense['defense']}_\n*(Track Record: {red_team_defense['track_record']})*",
+                },
+            }
+        )
 
     blocks.append({"type": "divider"})
     return blocks
 
 
 # ── Main worker ────────────────────────────────────────────────────────────────
+
 
 async def investigate(event: dict[str, Any]) -> None:
     """Run a full Sentinel investigation for one @mention event.
@@ -136,7 +165,7 @@ async def investigate(event: dict[str, Any]) -> None:
     short_id = case.case_id[:8]
     await app.client.chat_update(
         channel=channel,
-        ts=ts,                          # update the original "investigating…" message
+        ts=ts,  # update the original "investigating…" message
         blocks=[
             {
                 "type": "section",
@@ -160,16 +189,18 @@ async def investigate(event: dict[str, Any]) -> None:
     agent_tasks = [
         asyncio.to_thread(vision_agent.analyze, case.case_id),
         asyncio.to_thread(finance_agent.analyze, case.case_id),
-        asyncio.to_thread(stylometric_agent.analyze, case.case_id),
-        asyncio.to_thread(voice_agent.analyze, case.case_id),
-        asyncio.to_thread(threat_intel_agent.analyze, case.case_id),
-        asyncio.to_thread(nlp_agent.analyze, case.case_id),
-        asyncio.to_thread(policy_agent.analyze, case.case_id),
+        asyncio.to_thread(
+            stylometric_agent.analyze, case.case_id, "U123", "dummy text"
+        ),
+        asyncio.to_thread(voice_agent.analyze, case.case_id, "U123"),
+        asyncio.to_thread(threat_intel_agent.analyze, case.case_id, "example.com"),
+        asyncio.to_thread(nlp_agent.analyze, case.case_id, "dummy text"),
+        asyncio.to_thread(policy_agent.analyze, case.case_id, 100.0, ["admin"]),
     ]
-    
+
     results = await asyncio.gather(*agent_tasks, return_exceptions=True)
     claims: list[Claim] = []
-    
+
     for res in results:
         if isinstance(res, Exception):
             log.error("Agent failed: %s", res)
@@ -188,24 +219,41 @@ async def investigate(event: dict[str, Any]) -> None:
 
     # ── 4. Run contradiction engine ───────────────────────────────────────────
     verdict_obj = run_case(claims=claims)
-    log.info("Case %s verdict: %s (risk=%.3f)", case.case_id, verdict_obj.verdict, verdict_obj.risk)
+    log.info(
+        "Case %s verdict: %s (risk=%.3f)",
+        case.case_id,
+        verdict_obj.verdict,
+        verdict_obj.risk,
+    )
 
     # ── 4b. Graph Analytics (Blast Radius) on Confirmed Threat ──────────────
     if verdict_obj.verdict == "FRAUD_LIKELY":
         from sentinel.graph.cache import neighbors
         from sentinel.graph.analytics import analyze_blast_radius
+
         # Run BFS to find blast radius
         blast_nodes = await neighbors(reporter, depth=2)
         if blast_nodes:
-            log.info("Blast radius for %s: %d nodes touched", reporter, len(blast_nodes))
+            log.info(
+                "Blast radius for %s: %d nodes touched", reporter, len(blast_nodes)
+            )
         # Run PageRank and Clusters
         graph_stats = analyze_blast_radius([reporter])
         if graph_stats.get("super_spreader"):
             log.info("Identified super-spreader: %s", graph_stats["super_spreader"])
 
+    # ── 4c. Red-Team Sub-Agent (Phase 3 Support) ─────────────────────────────
+    red_team_defense = None
+    if verdict_obj.verdict in ("FRAUD_LIKELY", "REVIEW"):
+        from sentinel.agents.red_team_agent import generate_defense
+
+        red_team_defense = generate_defense(claims)
+        log.info("Red Team defense generated: %s", red_team_defense["defense"])
+
     # ── 5. Persist agent results ──────────────────────────────────────────────
     # Serialize Claim / Contradiction dataclasses to plain dicts for JSONB
     from dataclasses import asdict as _asdict
+
     await repo.save_agent_results(
         case_id=case.case_id,
         agent_name="contradiction_engine",
@@ -232,7 +280,7 @@ async def investigate(event: dict[str, Any]) -> None:
     )
 
     # ── 7. Post verdict card to Slack ─────────────────────────────────────────
-    blocks = _build_verdict_card(case.case_id, verdict_obj)
+    blocks = _build_verdict_card(case.case_id, verdict_obj, red_team_defense)
     await app.client.chat_postMessage(
         channel=channel,
         thread_ts=ts,

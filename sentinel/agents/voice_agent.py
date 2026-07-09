@@ -35,10 +35,9 @@ voice_mismatch = max(spoof_score, linguistic_mismatch_score)
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 
 import numpy as np
 
@@ -50,25 +49,26 @@ log = logging.getLogger(__name__)
 # ── Anti-spoofing reference ranges (calibrated on demo pair) ──────────────────
 # Real voice: higher energy variation, higher ZCR variance, lower centroid
 _REF = {
-    "rms_std_real":   (0.015, 0.12),   # (min, max) for a real voice
-    "zcr_std_real":   (0.010, 0.08),
-    "centroid_cloned": 3200,            # clones tend to have centroid > 3200 Hz
-    "jitter_real":    (0.003, 0.04),
+    "rms_std_real": (0.015, 0.12),  # (min, max) for a real voice
+    "zcr_std_real": (0.010, 0.08),
+    "centroid_cloned": 3200,  # clones tend to have centroid > 3200 Hz
+    "jitter_real": (0.003, 0.04),
 }
 
-FRAME_SIZE = 512   # samples per analysis frame
-HOP_SIZE   = 256   # hop between frames
+FRAME_SIZE = 512  # samples per analysis frame
+HOP_SIZE = 256  # hop between frames
 
 
 # ── Result ─────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class VoiceResult:
     case_id: str
     user_id: str
-    spoof_score: float            # acoustic anti-spoof score (0=real, 1=clone)
-    linguistic_mismatch: float    # stylometric cross-check (0=match, 1=mismatch)
-    voice_mismatch: float         # max of both — the headline number
+    spoof_score: float  # acoustic anti-spoof score (0=real, 1=clone)
+    linguistic_mismatch: float  # stylometric cross-check (0=match, 1=mismatch)
+    voice_mismatch: float  # max of both — the headline number
     flagged: bool
     detail: str
     source_pointer: str
@@ -85,6 +85,7 @@ class VoiceResult:
 
 
 # ── Main entry point ───────────────────────────────────────────────────────────
+
 
 def analyze(
     case_id: str,
@@ -115,8 +116,10 @@ def analyze(
     if pre_metrics and "voice_mismatch" in pre_metrics:
         vm = float(pre_metrics["voice_mismatch"])
         return VoiceResult(
-            case_id=case_id, user_id=user_id,
-            spoof_score=vm, linguistic_mismatch=0.0,
+            case_id=case_id,
+            user_id=user_id,
+            spoof_score=vm,
+            linguistic_mismatch=0.0,
             voice_mismatch=vm,
             flagged=vm >= 0.5,
             detail=f"Pre-extracted voice_mismatch={vm:.3f}",
@@ -132,8 +135,11 @@ def analyze(
     if samples is None:
         log.warning("voice: no audio provided for case %s", case_id)
         return VoiceResult(
-            case_id=case_id, user_id=user_id,
-            spoof_score=0.0, linguistic_mismatch=0.0, voice_mismatch=0.0,
+            case_id=case_id,
+            user_id=user_id,
+            spoof_score=0.0,
+            linguistic_mismatch=0.0,
+            voice_mismatch=0.0,
             flagged=False,
             detail="No audio provided — voice check skipped",
             source_pointer=f"{case_id}/voicenote.wav#antispoof",
@@ -155,7 +161,8 @@ def analyze(
         linguistic_mismatch = stylo.tone_anomaly
         log.info(
             "voice: linguistic-acoustic mismatch=%.3f for case=%s",
-            linguistic_mismatch, case_id,
+            linguistic_mismatch,
+            case_id,
         )
 
     voice_mismatch = round(max(spoof_score, linguistic_mismatch), 4)
@@ -163,21 +170,34 @@ def analyze(
 
     parts = []
     if spoof_score >= 0.50:
-        parts.append(f"acoustic anti-spoof score={spoof_score:.3f} (synthetic features detected)")
+        parts.append(
+            f"acoustic anti-spoof score={spoof_score:.3f} (synthetic features detected)"
+        )
     if linguistic_mismatch >= 0.35:
         parts.append(f"linguistic mismatch={linguistic_mismatch:.3f} vs baseline")
-    detail = "; ".join(parts) if parts else f"voice_mismatch={voice_mismatch:.3f} (within normal range)"
+    detail = (
+        "; ".join(parts)
+        if parts
+        else f"voice_mismatch={voice_mismatch:.3f} (within normal range)"
+    )
 
     log.info(
         "voice: case=%s spoof=%.3f linguistic=%.3f mismatch=%.3f flagged=%s",
-        case_id, spoof_score, linguistic_mismatch, voice_mismatch, flagged,
+        case_id,
+        spoof_score,
+        linguistic_mismatch,
+        voice_mismatch,
+        flagged,
     )
 
     return VoiceResult(
-        case_id=case_id, user_id=user_id,
-        spoof_score=spoof_score, linguistic_mismatch=linguistic_mismatch,
+        case_id=case_id,
+        user_id=user_id,
+        spoof_score=spoof_score,
+        linguistic_mismatch=linguistic_mismatch,
         voice_mismatch=voice_mismatch,
-        flagged=flagged, detail=detail,
+        flagged=flagged,
+        detail=detail,
         source_pointer=f"{case_id}/voicenote.wav#antispoof",
         transcript=transcript,
     )
@@ -185,13 +205,15 @@ def analyze(
 
 # ── Acoustic feature extraction ────────────────────────────────────────────────
 
+
 def _load_audio(path: Path) -> tuple[np.ndarray, int]:
     """Load audio via soundfile; fallback to raw PCM read."""
     try:
         import soundfile as sf  # type: ignore
+
         samples, sr = sf.read(str(path), dtype="float32", always_2d=False)
         if samples.ndim > 1:
-            samples = samples.mean(axis=1)   # mono
+            samples = samples.mean(axis=1)  # mono
         log.info("voice: loaded %s — %d samples @ %dHz", path.name, len(samples), sr)
         return samples, sr
     except Exception as e:
@@ -203,12 +225,12 @@ def _frames(samples: np.ndarray, frame_size: int, hop: int) -> list[np.ndarray]:
     """Split samples into overlapping frames."""
     result = []
     for start in range(0, len(samples) - frame_size, hop):
-        result.append(samples[start: start + frame_size])
+        result.append(samples[start : start + frame_size])
     return result or [samples]
 
 
 def _rms(frame: np.ndarray) -> float:
-    return float(np.sqrt(np.mean(frame ** 2)))
+    return float(np.sqrt(np.mean(frame**2)))
 
 
 def _zcr(frame: np.ndarray) -> float:
@@ -235,22 +257,22 @@ def _pitch_jitter(samples: np.ndarray, sr: int) -> float:
     which is higher for real voices (natural micro-variation) than
     for synthetic speech (mechanically stable pitch).
     """
-    win_size  = int(sr * 0.025)   # 25 ms window
-    hop       = win_size // 2
+    win_size = int(sr * 0.025)  # 25 ms window
+    hop = win_size // 2
     periods: list[float] = []
 
     for start in range(0, len(samples) - win_size, hop):
-        win = samples[start: start + win_size]
-        ac  = np.correlate(win, win, mode="full")
-        ac  = ac[len(ac) // 2:]
+        win = samples[start : start + win_size]
+        ac = np.correlate(win, win, mode="full")
+        ac = ac[len(ac) // 2 :]
         # Find the first peak in the F0 range (50–500 Hz)
-        lo  = int(sr / 500)
-        hi  = int(sr / 50)
+        lo = int(sr / 500)
+        hi = int(sr / 50)
         lo, hi = max(lo, 1), min(hi, len(ac) - 1)
         if lo >= hi:
             continue
         peak_idx = lo + int(np.argmax(ac[lo:hi]))
-        if ac[peak_idx] > 0.1 * ac[0]:   # voiced frame
+        if ac[peak_idx] > 0.1 * ac[0]:  # voiced frame
             periods.append(float(peak_idx))
 
     if len(periods) < 3:
@@ -266,28 +288,28 @@ def _acoustic_spoof_score(samples: np.ndarray, sr: int) -> float:
     """
     frs = _frames(samples, FRAME_SIZE, HOP_SIZE)
 
-    rms_vals  = np.array([_rms(f) for f in frs])
-    zcr_vals  = np.array([_zcr(f) for f in frs])
-    cen_vals  = np.array([_spectral_centroid(f, sr) for f in frs])
+    rms_vals = np.array([_rms(f) for f in frs])
+    zcr_vals = np.array([_zcr(f) for f in frs])
+    cen_vals = np.array([_spectral_centroid(f, sr) for f in frs])
 
-    rms_std   = float(np.std(rms_vals))
-    zcr_std   = float(np.std(zcr_vals))
-    centroid  = float(np.mean(cen_vals))
-    jitter    = _pitch_jitter(samples, sr)
+    rms_std = float(np.std(rms_vals))
+    zcr_std = float(np.std(zcr_vals))
+    centroid = float(np.mean(cen_vals))
+    jitter = _pitch_jitter(samples, sr)
 
     score_components: list[float] = []
 
     # Low RMS variation → more synthetic
-    rms_lo, rms_hi = _REF["rms_std_real"]
+    rms_lo, rms_hi = cast(tuple[float, float], _REF["rms_std_real"])
     if rms_std < rms_lo:
-        score_components.append(0.7)   # suspiciously flat energy
+        score_components.append(0.7)  # suspiciously flat energy
     elif rms_std > rms_hi:
-        score_components.append(0.1)   # highly variable — likely real
+        score_components.append(0.1)  # highly variable — likely real
     else:
         score_components.append(0.3)
 
     # Low ZCR variation → more synthetic
-    zcr_lo, zcr_hi = _REF["zcr_std_real"]
+    zcr_lo, zcr_hi = cast(tuple[float, float], _REF["zcr_std_real"])
     if zcr_std < zcr_lo:
         score_components.append(0.7)
     elif zcr_std > zcr_hi:
@@ -297,11 +319,11 @@ def _acoustic_spoof_score(samples: np.ndarray, sr: int) -> float:
 
     # High spectral centroid → more synthetic (TTS tends to be brighter)
     score_components.append(
-        min((centroid / _REF["centroid_cloned"]) * 0.5, 1.0)
+        min((centroid / cast(float, _REF["centroid_cloned"])) * 0.5, 1.0)
     )
 
     # Low jitter → more synthetic
-    j_lo, j_hi = _REF["jitter_real"]
+    j_lo, j_hi = cast(tuple[float, float], _REF["jitter_real"])
     if jitter < j_lo:
         score_components.append(0.65)
     elif jitter > j_hi:

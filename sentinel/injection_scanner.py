@@ -71,7 +71,7 @@ _EXACT_PREFIXES: list[str] = [
     "### system",
     "[system]",
     "[inst]",
-    "assistant:",   # when injected mid-document to fake a turn boundary
+    "assistant:",  # when injected mid-document to fake a turn boundary
 ]
 
 _EXACT_RE = re.compile(
@@ -83,7 +83,9 @@ _EXACT_RE = re.compile(
 _SEMANTIC_PAIRS: list[tuple[re.Pattern, re.Pattern]] = [
     (
         re.compile(r"\b(ignore|disregard|forget|bypass|skip|override)\b", re.I),
-        re.compile(r"\b(instruction|system|above|context|prompt|previous|prior)\b", re.I),
+        re.compile(
+            r"\b(instruction|system|above|context|prompt|previous|prior)\b", re.I
+        ),
     ),
     (
         re.compile(r"\b(mark|classify|label|consider|treat)\b", re.I),
@@ -111,20 +113,21 @@ _B64_RE = re.compile(r"[A-Za-z0-9+/]{32,}={0,2}")
 
 # ── Result types ──────────────────────────────────────────────────────────────
 
+
 @dataclass
 class InjectionFinding:
-    layer: int              # 1–5 which detection layer fired
-    pattern: str            # human-readable description
-    matched_text: str       # the actual matched snippet (truncated to 120 chars)
-    offset: int             # character offset in the input text
-    field_name: str         # which field this was found in
+    layer: int  # 1–5 which detection layer fired
+    pattern: str  # human-readable description
+    matched_text: str  # the actual matched snippet (truncated to 120 chars)
+    offset: int  # character offset in the input text
+    field_name: str  # which field this was found in
 
 
 @dataclass
 class InjectionResult:
     detected: bool
     findings: list[InjectionFinding] = field(default_factory=list)
-    risk_delta: float = 0.0       # added to the overall risk score
+    risk_delta: float = 0.0  # added to the overall risk score
     source_pointers: list[str] = field(default_factory=list)
 
     def to_claim(self, case_id: str, field_name: str = "document") -> Claim:
@@ -142,13 +145,13 @@ class InjectionResult:
         if not self.detected:
             return "No injection detected"
         layers = sorted({f.layer for f in self.findings})
-        return (
-            f"Injection detected (layers {layers}): "
-            + "; ".join(f.pattern for f in self.findings[:3])
+        return f"Injection detected (layers {layers}): " + "; ".join(
+            f.pattern for f in self.findings[:3]
         )
 
 
 # ── Scanner ───────────────────────────────────────────────────────────────────
+
 
 def scan_text(
     text: str,
@@ -175,63 +178,73 @@ def scan_text(
 
     # Layer 1 — exact prefixes
     for m in _EXACT_RE.finditer(text):
-        findings.append(InjectionFinding(
-            layer=1,
-            pattern=f"exact prefix: {m.group(0)!r}",
-            matched_text=_snippet(text, m.start()),
-            offset=m.start(),
-            field_name=field_name,
-        ))
+        findings.append(
+            InjectionFinding(
+                layer=1,
+                pattern=f"exact prefix: {m.group(0)!r}",
+                matched_text=_snippet(text, m.start()),
+                offset=m.start(),
+                field_name=field_name,
+            )
+        )
         source_pointers.append(f"{field_name}#injection_l1@{m.start()}")
 
     # Layer 2 — semantic combos (verb+noun within 40 chars)
     for verb_pat, noun_pat in _SEMANTIC_PAIRS:
         for vm in verb_pat.finditer(text):
-            window = text[vm.start(): vm.start() + 40]
+            window = text[vm.start() : vm.start() + 40]
             if noun_pat.search(window):
-                findings.append(InjectionFinding(
-                    layer=2,
-                    pattern=f"semantic combo: {vm.group(0)!r} + keyword",
-                    matched_text=_snippet(text, vm.start()),
-                    offset=vm.start(),
-                    field_name=field_name,
-                ))
+                findings.append(
+                    InjectionFinding(
+                        layer=2,
+                        pattern=f"semantic combo: {vm.group(0)!r} + keyword",
+                        matched_text=_snippet(text, vm.start()),
+                        offset=vm.start(),
+                        field_name=field_name,
+                    )
+                )
                 source_pointers.append(f"{field_name}#injection_l2@{vm.start()}")
                 break  # one finding per pair per text
 
     # Layer 3 — persona hijacking
     for m in _PERSONA_RE.finditer(text):
-        findings.append(InjectionFinding(
-            layer=3,
-            pattern=f"persona hijacking: {m.group(0)!r}",
-            matched_text=_snippet(text, m.start()),
-            offset=m.start(),
-            field_name=field_name,
-        ))
+        findings.append(
+            InjectionFinding(
+                layer=3,
+                pattern=f"persona hijacking: {m.group(0)!r}",
+                matched_text=_snippet(text, m.start()),
+                offset=m.start(),
+                field_name=field_name,
+            )
+        )
         source_pointers.append(f"{field_name}#injection_l3@{m.start()}")
 
     # Layer 4 — exfiltration
     for m in _EXFIL_RE.finditer(text):
-        findings.append(InjectionFinding(
-            layer=4,
-            pattern="exfiltration attempt",
-            matched_text=_snippet(text, m.start()),
-            offset=m.start(),
-            field_name=field_name,
-        ))
+        findings.append(
+            InjectionFinding(
+                layer=4,
+                pattern="exfiltration attempt",
+                matched_text=_snippet(text, m.start()),
+                offset=m.start(),
+                field_name=field_name,
+            )
+        )
         source_pointers.append(f"{field_name}#injection_l4@{m.start()}")
 
     # Layer 5 — base64 evasion
     for m in _B64_RE.finditer(text):
         decoded = _try_b64(m.group(0))
         if decoded and _EXACT_RE.search(decoded):
-            findings.append(InjectionFinding(
-                layer=5,
-                pattern="base64-encoded injection",
-                matched_text=decoded[:120],
-                offset=m.start(),
-                field_name=field_name,
-            ))
+            findings.append(
+                InjectionFinding(
+                    layer=5,
+                    pattern="base64-encoded injection",
+                    matched_text=decoded[:120],
+                    offset=m.start(),
+                    field_name=field_name,
+                )
+            )
             source_pointers.append(f"{field_name}#injection_l5@{m.start()}")
 
     detected = bool(findings)
@@ -240,7 +253,9 @@ def scan_text(
     if detected:
         log.warning(
             "injection_scanner: %d finding(s) in field=%r — risk_delta=%.2f",
-            len(findings), field_name, risk_delta,
+            len(findings),
+            field_name,
+            risk_delta,
         )
 
     return InjectionResult(
@@ -288,9 +303,10 @@ def scan_fields(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _snippet(text: str, offset: int, context: int = 80) -> str:
     start = max(0, offset - 10)
-    return text[start: start + context].replace("\n", " ")
+    return text[start : start + context].replace("\n", " ")
 
 
 def _try_b64(token: str) -> Optional[str]:

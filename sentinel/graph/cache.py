@@ -48,6 +48,7 @@ def get_graph() -> nx.DiGraph:
 
 # ── Node helpers ───────────────────────────────────────────────────────────────
 
+
 def _ensure_node(G: nx.DiGraph, node_id: str, node_type: str, **attrs) -> None:
     """Add node if absent; merge attrs if present."""
     if not G.has_node(node_id):
@@ -57,6 +58,7 @@ def _ensure_node(G: nx.DiGraph, node_id: str, node_type: str, **attrs) -> None:
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
+
 
 async def ingest_event(event: dict[str, Any]) -> None:
     """Add a Slack event to the graph.
@@ -115,7 +117,9 @@ async def ingest_event(event: dict[str, Any]) -> None:
                 _ensure_node(_graph, uid, "user")
                 _ensure_node(_graph, cid, "channel")
                 if not _graph.has_edge(uid, cid):
-                    _graph.add_edge(uid, cid, edge_type="member_of", count=0, latest_ts=ts)
+                    _graph.add_edge(
+                        uid, cid, edge_type="member_of", count=0, latest_ts=ts
+                    )
 
 
 async def neighbors(node_id: str, depth: int = 2) -> set[str]:
@@ -154,13 +158,9 @@ def get_graph_snapshot() -> dict[str, Any]:
     Used by the React console's force-directed graph panel. Nodes carry their
     type and attrs; edges carry type and weight.
     """
-    nodes = [
-        {"id": n, **data}
-        for n, data in _graph.nodes(data=True)
-    ]
+    nodes = [{"id": n, **data} for n, data in _graph.nodes(data=True)]
     edges = [
-        {"source": u, "target": v, **data}
-        for u, v, data in _graph.edges(data=True)
+        {"source": u, "target": v, **data} for u, v, data in _graph.edges(data=True)
     ]
     return {
         "node_count": _graph.number_of_nodes(),

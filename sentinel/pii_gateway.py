@@ -49,12 +49,13 @@ log = logging.getLogger(__name__)
 
 # ── HMAC pepper ───────────────────────────────────────────────────────────────
 
+
 def _pepper() -> bytes:
     val = os.environ.get("PII_HMAC_PEPPER", "")
     if not val:
         raise RuntimeError(
             "PII_HMAC_PEPPER env var is not set. "
-            "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+            'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
         )
     return val.encode()
 
@@ -65,7 +66,9 @@ def _hmac_token(label: str, value: str) -> str:
     The token is the first 8 hex chars of HMAC-SHA256(pepper, label+value),
     wrapped in unicode brackets so it's visually distinct and greppable.
     """
-    digest = hmac.new(_pepper(), f"{label}:{value}".encode(), hashlib.sha256).hexdigest()
+    digest = hmac.new(
+        _pepper(), f"{label}:{value}".encode(), hashlib.sha256
+    ).hexdigest()
     return f"\u27e6{label}:{digest[:8]}\u27e7"
 
 
@@ -79,19 +82,24 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
     # Email
     ("EMAIL", re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")),
     # Phone  (+1-800-555-0100 / (800) 555-0100 / 800.555.0100)
-    ("PHONE", re.compile(
-        r"(\+?\d{1,3}[\s\-.]?)?"
-        r"(\(?\d{3}\)?[\s\-.]?)"
-        r"\d{3}[\s\-.]?\d{4}\b"
-    )),
+    (
+        "PHONE",
+        re.compile(
+            r"(\+?\d{1,3}[\s\-.]?)?"
+            r"(\(?\d{3}\)?[\s\-.]?)"
+            r"\d{3}[\s\-.]?\d{4}\b"
+        ),
+    ),
 ]
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class PIIRegistry:
     """Maps token → original value for a single pipeline call."""
+
     _store: dict[str, str] = field(default_factory=dict)
 
     def register(self, token: str, original: str) -> None:
@@ -111,6 +119,7 @@ class PIIRegistry:
 
 
 # ── Core functions ────────────────────────────────────────────────────────────
+
 
 def redact(
     text: str,
@@ -149,6 +158,7 @@ def redact(
 
     # ── Pass 1: regex ─────────────────────────────────────────────────────────
     for label, pattern in _PATTERNS:
+
         def _replace(m, lbl=label):
             original = m.group(0)
             token = _hmac_token(lbl, original)
@@ -160,11 +170,13 @@ def redact(
     # ── Optional: dollar amounts ──────────────────────────────────────────────
     if redact_amounts:
         _amt_pat = re.compile(r"\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?")
+
         def _replace_amt(m):
             original = m.group(0)
             token = _hmac_token("AMT", original)
             registry.register(token, original)
             return token
+
         result = _amt_pat.sub(_replace_amt, result)
 
     # ── Pass 2: spaCy NER (PERSON + ORG) ─────────────────────────────────────
@@ -198,6 +210,7 @@ def _ner_redact(text: str, registry: PIIRegistry) -> str:
         _nlp_attempted = True
         try:
             import spacy  # type: ignore
+
             # Try the small English model; install with:
             # python -m spacy download en_core_web_sm
             _nlp = spacy.load("en_core_web_sm")
@@ -227,6 +240,7 @@ def _ner_redact(text: str, registry: PIIRegistry) -> str:
 
 
 # ── Convenience: scrub a dict of fields ──────────────────────────────────────
+
 
 def redact_fields(
     fields: dict[str, str],

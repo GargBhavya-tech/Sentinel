@@ -56,47 +56,64 @@ def reconcile(claims: list[Claim]) -> Verdict:
         lo = max(min(visual, structured), 1e-9)
         ratio = max(visual, structured) / lo
         if ratio >= RATIO_TRIGGER:
-            contradictions.append(Contradiction(
-                axis="visual_vs_structured",
-                detail=f"Shown total {visual:,.0f} contradicts charged total {structured:,.0f} ({ratio:.1f}x mismatch)",
-                weight=RATIO_WEIGHT,
-                evidence=[p for p in (_ptr(by_field, "visual_total"), _ptr(by_field, "structured_total")) if p],
-            ))
+            contradictions.append(
+                Contradiction(
+                    axis="visual_vs_structured",
+                    detail=f"Shown total {visual:,.0f} contradicts charged total {structured:,.0f} ({ratio:.1f}x mismatch)",
+                    weight=RATIO_WEIGHT,
+                    evidence=[
+                        p
+                        for p in (
+                            _ptr(by_field, "visual_total"),
+                            _ptr(by_field, "structured_total"),
+                        )
+                        if p
+                    ],
+                )
+            )
 
     tone_anomaly = _get(by_field, "tone_anomaly")
     if tone_anomaly is not None and tone_anomaly >= TONE_TRIGGER:
-        contradictions.append(Contradiction(
-            axis="tone_vs_baseline",
-            detail=f"Message tone deviates from sender's writing baseline (anomaly {tone_anomaly:.2f})",
-            weight=TONE_WEIGHT,
-            evidence=[p for p in (_ptr(by_field, "tone_anomaly"),) if p],
-        ))
+        contradictions.append(
+            Contradiction(
+                axis="tone_vs_baseline",
+                detail=f"Message tone deviates from sender's writing baseline (anomaly {tone_anomaly:.2f})",
+                weight=TONE_WEIGHT,
+                evidence=[p for p in (_ptr(by_field, "tone_anomaly"),) if p],
+            )
+        )
 
     voice_mismatch = _get(by_field, "voice_mismatch")
     if voice_mismatch is not None and voice_mismatch >= VOICE_TRIGGER:
-        contradictions.append(Contradiction(
-            axis="voice_vs_baseline",
-            detail=f"Voice note fails linguistic-acoustic match to sender (mismatch {voice_mismatch:.2f})",
-            weight=VOICE_WEIGHT,
-            evidence=[p for p in (_ptr(by_field, "voice_mismatch"),) if p],
-        ))
+        contradictions.append(
+            Contradiction(
+                axis="voice_vs_baseline",
+                detail=f"Voice note fails linguistic-acoustic match to sender (mismatch {voice_mismatch:.2f})",
+                weight=VOICE_WEIGHT,
+                evidence=[p for p in (_ptr(by_field, "voice_mismatch"),) if p],
+            )
+        )
 
     domain_age = _get(by_field, "domain_age_days")
     if domain_age is not None and domain_age <= DOMAIN_YOUNG_DAYS and contradictions:
-        contradictions.append(Contradiction(
-            axis="young_domain",
-            detail=f"Sender domain is only {domain_age} days old",
-            weight=DOMAIN_WEIGHT,
-            evidence=[p for p in (_ptr(by_field, "domain_age_days"),) if p],
-        ))
+        contradictions.append(
+            Contradiction(
+                axis="young_domain",
+                detail=f"Sender domain is only {domain_age} days old",
+                weight=DOMAIN_WEIGHT,
+                evidence=[p for p in (_ptr(by_field, "domain_age_days"),) if p],
+            )
+        )
 
     if bool(_get(by_field, "injection_present", False)):
-        contradictions.append(Contradiction(
-            axis="injection",
-            detail="Embedded instruction-injection attempt found in the document",
-            weight=INJECTION_WEIGHT,
-            evidence=[p for p in (_ptr(by_field, "injection_present"),) if p],
-        ))
+        contradictions.append(
+            Contradiction(
+                axis="injection",
+                detail="Embedded instruction-injection attempt found in the document",
+                weight=INJECTION_WEIGHT,
+                evidence=[p for p in (_ptr(by_field, "injection_present"),) if p],
+            )
+        )
 
     risk = min(1.0, sum(c.weight for c in contradictions))
 
@@ -113,8 +130,12 @@ def reconcile(claims: list[Claim]) -> Verdict:
     else:
         label = "CLEAR"
 
-    return Verdict(risk=round(risk, 3), verdict=label, contradictions=contradictions,
-                   counterfactual=_counterfactual(by_field, label))
+    return Verdict(
+        risk=round(risk, 3),
+        verdict=label,
+        contradictions=contradictions,
+        counterfactual=_counterfactual(by_field, label),
+    )
 
 
 def _solo_extreme(by_field) -> Optional[Contradiction]:
@@ -123,23 +144,50 @@ def _solo_extreme(by_field) -> Optional[Contradiction]:
     if visual is not None and structured is not None:
         ratio = max(visual, structured) / max(min(visual, structured), 1e-9)
         if ratio >= SOLO_RATIO:
-            return Contradiction("visual_vs_structured", f"Blatant {ratio:.0f}x total mismatch", SOLO_FLOOR,
-                                 [p for p in (_ptr(by_field, "visual_total"), _ptr(by_field, "structured_total")) if p])
+            return Contradiction(
+                "visual_vs_structured",
+                f"Blatant {ratio:.0f}x total mismatch",
+                SOLO_FLOOR,
+                [
+                    p
+                    for p in (
+                        _ptr(by_field, "visual_total"),
+                        _ptr(by_field, "structured_total"),
+                    )
+                    if p
+                ],
+            )
     tone = _get(by_field, "tone_anomaly")
     if tone is not None and tone >= SOLO_TONE:
-        return Contradiction("tone_vs_baseline", f"Extreme stylometric anomaly ({tone:.2f})", SOLO_FLOOR,
-                             [p for p in (_ptr(by_field, "tone_anomaly"),) if p])
+        return Contradiction(
+            "tone_vs_baseline",
+            f"Extreme stylometric anomaly ({tone:.2f})",
+            SOLO_FLOOR,
+            [p for p in (_ptr(by_field, "tone_anomaly"),) if p],
+        )
     voice = _get(by_field, "voice_mismatch")
     if voice is not None and voice >= SOLO_VOICE:
-        return Contradiction("voice_vs_baseline", f"Extreme voice-spoof score ({voice:.2f})", SOLO_FLOOR,
-                             [p for p in (_ptr(by_field, "voice_mismatch"),) if p])
+        return Contradiction(
+            "voice_vs_baseline",
+            f"Extreme voice-spoof score ({voice:.2f})",
+            SOLO_FLOOR,
+            [p for p in (_ptr(by_field, "voice_mismatch"),) if p],
+        )
     domain_age = _get(by_field, "domain_age_days")
     if domain_age is not None and domain_age <= SOLO_DOMAIN_DAYS:
-        return Contradiction("young_domain", f"Sender domain registered {domain_age} day(s) ago", SOLO_FLOOR,
-                             [p for p in (_ptr(by_field, "domain_age_days"),) if p])
+        return Contradiction(
+            "young_domain",
+            f"Sender domain registered {domain_age} day(s) ago",
+            SOLO_FLOOR,
+            [p for p in (_ptr(by_field, "domain_age_days"),) if p],
+        )
     if bool(_get(by_field, "injection_present", False)):
-        return Contradiction("injection", "Embedded instruction-injection attempt (malicious on its own)",
-                             SOLO_FLOOR, [p for p in (_ptr(by_field, "injection_present"),) if p])
+        return Contradiction(
+            "injection",
+            "Embedded instruction-injection attempt (malicious on its own)",
+            SOLO_FLOOR,
+            [p for p in (_ptr(by_field, "injection_present"),) if p],
+        )
     return None
 
 

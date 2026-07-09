@@ -42,6 +42,7 @@ register_graph_listeners(app)
 # gateway.py via FastAPI BackgroundTasks after the ACK returns.
 # The handler here only posts the "Case created…" acknowledgement card.
 
+
 @app.event("app_mention")
 async def on_mention(event: dict, say, ack) -> None:
     """ACK Slack immediately; gateway.py will enqueue the background worker."""

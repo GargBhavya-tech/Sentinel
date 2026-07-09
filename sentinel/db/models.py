@@ -18,9 +18,12 @@ from typing import Any, Optional
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
+
 def _now() -> datetime:
     from datetime import timezone
+
     return datetime.now(timezone.utc)
+
 
 def _uuid() -> str:
     return str(uuid.uuid4())
@@ -36,18 +39,20 @@ class Case:
     """One investigation triggered by @Sentinel investigate."""
 
     case_id: str = field(default_factory=_uuid)
-    slack_channel: str = ""           # C0123456789
-    slack_ts: str = ""                # message timestamp used for threading
-    reporter_slack_id: str = ""       # U0123456789
-    status: str = "created"           # created → analyzing → verdict → resolved
+    slack_channel: str = ""  # C0123456789
+    slack_ts: str = ""  # message timestamp used for threading
+    reporter_slack_id: str = ""  # U0123456789
+    status: str = "created"  # created → analyzing → verdict → resolved
     risk_score: Optional[float] = None
-    verdict: Optional[str] = None     # FRAUD_LIKELY | REVIEW | CLEAR
+    verdict: Optional[str] = None  # FRAUD_LIKELY | REVIEW | CLEAR
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
 
     def __post_init__(self) -> None:
         if self.status not in CASE_STATUS:
-            raise ValueError(f"status must be one of {CASE_STATUS}, got {self.status!r}")
+            raise ValueError(
+                f"status must be one of {CASE_STATUS}, got {self.status!r}"
+            )
 
 
 # ─── Evidence ────────────────────────────────────────────────────────────────
@@ -61,13 +66,16 @@ class Evidence:
 
     evidence_id: str = field(default_factory=_uuid)
     case_id: str = ""
-    evidence_type: str = "file"       # file | message | voice | url
-    file_url: Optional[str] = None    # Slack CDN URL if a file
-    raw_metrics: dict[str, Any] = field(default_factory=dict)  # pre-extracted metrics JSONB
+    evidence_type: str = "file"  # file | message | voice | url
+    file_url: Optional[str] = None  # Slack CDN URL if a file
+    raw_metrics: dict[str, Any] = field(
+        default_factory=dict
+    )  # pre-extracted metrics JSONB
     created_at: datetime = field(default_factory=_now)
 
 
 # ─── AgentResult ─────────────────────────────────────────────────────────────
+
 
 @dataclass
 class AgentResult:
@@ -75,13 +83,16 @@ class AgentResult:
 
     result_id: str = field(default_factory=_uuid)
     case_id: str = ""
-    agent_name: str = ""              # "vision" | "finance" | "stylometric" | …
-    claims: list[dict] = field(default_factory=list)        # serialised Claim objects
-    contradictions: list[dict] = field(default_factory=list) # serialised Contradiction objects
+    agent_name: str = ""  # "vision" | "finance" | "stylometric" | …
+    claims: list[dict] = field(default_factory=list)  # serialised Claim objects
+    contradictions: list[dict] = field(
+        default_factory=list
+    )  # serialised Contradiction objects
     created_at: datetime = field(default_factory=_now)
 
 
 # ─── SynthesizedRule ─────────────────────────────────────────────────────────
+
 
 @dataclass
 class SynthesizedRule:
@@ -90,11 +101,12 @@ class SynthesizedRule:
     rule_id: str = field(default_factory=_uuid)
     source_case_id: str = ""
     rule_json: dict[str, Any] = field(default_factory=dict)  # structured JSON rule
-    status: str = "shadow"            # shadow → enforced
+    status: str = "shadow"  # shadow → enforced
     created_at: datetime = field(default_factory=_now)
 
 
 # ─── AuditChainEntry ─────────────────────────────────────────────────────────
+
 
 @dataclass
 class AuditChainEntry:
@@ -107,8 +119,10 @@ class AuditChainEntry:
 
     entry_id: int = 0
     case_id: str = ""
-    event_type: str = ""              # "case_created" | "verdict" | "quarantine" | "rule_promoted" …
+    event_type: str = (
+        ""  # "case_created" | "verdict" | "quarantine" | "rule_promoted" …
+    )
     payload: dict[str, Any] = field(default_factory=dict)
-    prev_hash: str = ""               # SHA-256 of the previous entry (hex)
-    entry_hash: str = ""              # SHA-256 of this entry's canonical form (hex)
+    prev_hash: str = ""  # SHA-256 of the previous entry (hex)
+    entry_hash: str = ""  # SHA-256 of this entry's canonical form (hex)
     created_at: datetime = field(default_factory=_now)

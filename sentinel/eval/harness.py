@@ -34,7 +34,11 @@ class Metrics:
             "precision": round(self.precision, 4),
             "recall": round(self.recall, 4),
             "f1": round(self.f1, 4),
-            "tp": self.tp, "fp": self.fp, "tn": self.tn, "fn": self.fn, "n": self.n,
+            "tp": self.tp,
+            "fp": self.fp,
+            "tn": self.tn,
+            "fn": self.fn,
+            "n": self.n,
         }
 
 
@@ -56,7 +60,9 @@ def _score(cases: Iterable[Case], engine: str) -> tuple[Metrics, set[str]]:
             fn += 1
     precision = tp / (tp + fp) if (tp + fp) else 0.0
     recall = tp / (tp + fn) if (tp + fn) else 0.0
-    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+    f1 = (
+        (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+    )
     n = tp + fp + tn + fn
     return Metrics(precision, recall, f1, tp, fp, tn, fn, n), caught_fraud_ids
 

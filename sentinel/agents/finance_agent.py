@@ -31,26 +31,27 @@ from ..claims import Claim
 log = logging.getLogger(__name__)
 
 # ── EWMA parameters ───────────────────────────────────────────────────────────
-EWMA_ALPHA        = 0.3    # smoothing factor — lower = longer memory
-AMOUNT_DEVIATION  = 2.5    # flag if amount > N × ewma expected
-MAX_ROUND_AMOUNT  = 50_000 # round amounts above this are suspicious
-_WEEKEND          = {5, 6} # Saturday, Sunday
+EWMA_ALPHA = 0.3  # smoothing factor — lower = longer memory
+AMOUNT_DEVIATION = 2.5  # flag if amount > N × ewma expected
+MAX_ROUND_AMOUNT = 50_000  # round amounts above this are suspicious
+_WEEKEND = {5, 6}  # Saturday, Sunday
 
 
 # ── Result ─────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class RiskFactor:
     name: str
     detail: str
-    weight: float   # 0..1 contribution to risk
+    weight: float  # 0..1 contribution to risk
 
 
 @dataclass
 class FinanceResult:
     case_id: str
     structured_total: Optional[float]
-    risk_score: float          # 0..1 composite
+    risk_score: float  # 0..1 composite
     risk_factors: list[RiskFactor] = field(default_factory=list)
     top_factors: list[str] = field(default_factory=list)
     source_pointer: str = ""
@@ -58,20 +59,25 @@ class FinanceResult:
     def to_claims(self) -> list[Claim]:
         claims: list[Claim] = []
         if self.structured_total is not None:
-            claims.append(Claim(
-                field="structured_total",
-                value=self.structured_total,
-                confidence=0.99,
-                source_pointer=self.source_pointer or f"{self.case_id}/data.csv#R14C3",
+            claims.append(
+                Claim(
+                    field="structured_total",
+                    value=self.structured_total,
+                    confidence=0.99,
+                    source_pointer=self.source_pointer
+                    or f"{self.case_id}/data.csv#R14C3",
+                    agent="finance",
+                )
+            )
+        claims.append(
+            Claim(
+                field="finance_risk",
+                value=self.risk_score,
+                confidence=0.85,
+                source_pointer=self.source_pointer or f"{self.case_id}/data.csv#risk",
                 agent="finance",
-            ))
-        claims.append(Claim(
-            field="finance_risk",
-            value=self.risk_score,
-            confidence=0.85,
-            source_pointer=self.source_pointer or f"{self.case_id}/data.csv#risk",
-            agent="finance",
-        ))
+            )
+        )
         return claims
 
 
@@ -101,11 +107,12 @@ def clear_vendor_history() -> None:
 
 # ── Main entry point ───────────────────────────────────────────────────────────
 
+
 def analyze(
     case_id: str,
     amount: Optional[float] = None,
     vendor: Optional[str] = None,
-    invoice_date: Optional[str] = None,   # ISO format: "2026-07-09"
+    invoice_date: Optional[str] = None,  # ISO format: "2026-07-09"
     invoice_number: Optional[str] = None,
     csv_text: Optional[str] = None,
     prior_invoices: Optional[list[dict]] = None,  # list of {amount, vendor, date}
@@ -128,7 +135,7 @@ def analyze(
     # ── Pre-extracted shortcut ────────────────────────────────────────────────
     if pre_metrics and "structured_total" in pre_metrics:
         total = float(pre_metrics["structured_total"])
-        risk  = float(pre_metrics.get("finance_risk", 0.0))
+        risk = float(pre_metrics.get("finance_risk", 0.0))
         return FinanceResult(
             case_id=case_id,
             structured_total=total,
@@ -146,56 +153,67 @@ def analyze(
     if amount is not None and vendor:
         history = _vendor_history.get(vendor, [])
         if prior_invoices:
-            history = [p["amount"] for p in prior_invoices
-                       if p.get("vendor") == vendor] + history
+            history = [
+                p["amount"] for p in prior_invoices if p.get("vendor") == vendor
+            ] + history
 
         if history:
             expected = _ewma(history)
             if expected > 0 and amount > expected * AMOUNT_DEVIATION:
-                factors.append(RiskFactor(
-                    name="ewma_deviation",
-                    detail=(
-                        f"Amount ${amount:,.2f} is {amount/expected:.1f}× "
-                        f"the EWMA expected ${expected:,.2f} for {vendor!r}"
-                    ),
-                    weight=0.40,
-                ))
+                factors.append(
+                    RiskFactor(
+                        name="ewma_deviation",
+                        detail=(
+                            f"Amount ${amount:,.2f} is {amount / expected:.1f}× "
+                            f"the EWMA expected ${expected:,.2f} for {vendor!r}"
+                        ),
+                        weight=0.40,
+                    )
+                )
         else:
             # New vendor — mild flag
-            factors.append(RiskFactor(
-                name="new_vendor",
-                detail=f"No prior transaction history for vendor {vendor!r}",
-                weight=0.20,
-            ))
+            factors.append(
+                RiskFactor(
+                    name="new_vendor",
+                    detail=f"No prior transaction history for vendor {vendor!r}",
+                    weight=0.20,
+                )
+            )
 
     # ── Round-number check ────────────────────────────────────────────────────
     if amount and amount >= MAX_ROUND_AMOUNT and amount == int(amount):
-        factors.append(RiskFactor(
-            name="round_amount",
-            detail=f"Suspiciously round amount ${amount:,.0f}",
-            weight=0.25,
-        ))
+        factors.append(
+            RiskFactor(
+                name="round_amount",
+                detail=f"Suspiciously round amount ${amount:,.0f}",
+                weight=0.25,
+            )
+        )
 
     # ── Weekend submission ────────────────────────────────────────────────────
     if invoice_date:
         try:
             dt = datetime.fromisoformat(invoice_date)
             if dt.weekday() in _WEEKEND:
-                factors.append(RiskFactor(
-                    name="weekend_submission",
-                    detail=f"Invoice submitted on a {dt.strftime('%A')}",
-                    weight=0.15,
-                ))
+                factors.append(
+                    RiskFactor(
+                        name="weekend_submission",
+                        detail=f"Invoice submitted on a {dt.strftime('%A')}",
+                        weight=0.15,
+                    )
+                )
         except ValueError:
             pass
 
     # ── Duplicate invoice number (simple in-memory check) ────────────────────
     if invoice_number and _is_duplicate(case_id, invoice_number):
-        factors.append(RiskFactor(
-            name="duplicate_invoice",
-            detail=f"Invoice number {invoice_number!r} already seen",
-            weight=0.45,
-        ))
+        factors.append(
+            RiskFactor(
+                name="duplicate_invoice",
+                detail=f"Invoice number {invoice_number!r} already seen",
+                weight=0.45,
+            )
+        )
 
     # ── Composite risk score ──────────────────────────────────────────────────
     risk_score = round(min(sum(f.weight for f in factors), 1.0), 4)
@@ -203,7 +221,10 @@ def analyze(
 
     log.info(
         "finance: case=%s amount=%.2f risk=%.3f factors=%s",
-        case_id, amount or 0.0, risk_score, top_factors,
+        case_id,
+        amount or 0.0,
+        risk_score,
+        top_factors,
     )
 
     return FinanceResult(
@@ -217,6 +238,7 @@ def analyze(
 
 
 # ── CSV parser ────────────────────────────────────────────────────────────────
+
 
 def _parse_csv(
     csv_text: str,
@@ -232,6 +254,7 @@ def _parse_csv(
         # Pre-quote bare dollar amounts so CSV commas don't split columns.
         # Pattern: $digits-and-commas at start of a cell (after , or start of line)
         import re as _re
+
         cleaned = _re.sub(
             r'(?<!["\w])(\$[\d,]+(?:\.\d{2})?)',
             lambda m: f'"{m.group(1)}"',
@@ -267,7 +290,7 @@ def _parse_csv(
                     date = row_lower[key]
                     break
             if amount:
-                break   # use first data row
+                break  # use first data row
     except Exception as e:
         log.warning("finance: CSV parse failed (%s)", e)
     return amount, vendor, inv_num, date

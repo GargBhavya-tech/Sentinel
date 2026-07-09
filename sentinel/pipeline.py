@@ -14,17 +14,16 @@ The gap between the two is the number we put on screen in the demo.
 
 from __future__ import annotations
 
-from typing import Any
 
 from .claims import Verdict, Claim
 from .reconciler import reconcile
 
 # Hard, single-signal thresholds for the OFF baseline. Each corresponds to one
 # agent screaming on its own. If none scream individually, the baseline is CLEAR.
-SOLO_RATIO = 10.0        # a 10x+ total mismatch is obvious even to a naive check
-SOLO_TONE = 0.90         # an extreme stylometric anomaly
-SOLO_VOICE = 0.90        # an extreme voice-spoof score
-SOLO_DOMAIN_DAYS = 3     # a domain registered in the last couple of days
+SOLO_RATIO = 10.0  # a 10x+ total mismatch is obvious even to a naive check
+SOLO_TONE = 0.90  # an extreme stylometric anomaly
+SOLO_VOICE = 0.90  # an extreme voice-spoof score
+SOLO_DOMAIN_DAYS = 3  # a domain registered in the last couple of days
 
 
 def run_case(claims: list[Claim], contradiction_engine: str = "on") -> Verdict:
@@ -38,7 +37,7 @@ def run_case(claims: list[Claim], contradiction_engine: str = "on") -> Verdict:
 def _single_model_baseline(claims: list[Claim]) -> Verdict:
     """Per-agent scoring with no cross-examination (the baseline everyone ships)."""
     claims_dict = {c.field: c.value for c in claims}
-    
+
     visual = claims_dict.get("visual_total")
     structured = claims_dict.get("structured_total")
     tone_anomaly = claims_dict.get("tone_anomaly", 0.0)

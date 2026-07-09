@@ -31,10 +31,9 @@ Checks performed
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, time as dtime
-from typing import Optional
+from typing import Optional, cast
 
 from ..claims import Claim
 
@@ -69,16 +68,17 @@ _TIERS = [
     },
 ]
 
-_BUSINESS_HOURS = (dtime(8, 0), dtime(18, 0))   # 08:00 – 18:00 local
+_BUSINESS_HOURS = (dtime(8, 0), dtime(18, 0))  # 08:00 – 18:00 local
 
 
 # ── Result ─────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class PolicyViolation:
     rule: str
     detail: str
-    severity: float   # 0..1
+    severity: float  # 0..1
 
 
 @dataclass
@@ -94,7 +94,7 @@ class PolicyResult:
         return Claim(
             field="policy_violation",
             value=not self.compliant,
-            confidence=1.0,   # deterministic — always fully confident
+            confidence=1.0,  # deterministic — always fully confident
             source_pointer=self.source_pointer or f"{self.case_id}/policy#matrix",
             agent="policy",
         )
@@ -106,11 +106,14 @@ class PolicyResult:
 
 # ── Main entry point ───────────────────────────────────────────────────────────
 
+
 def analyze(
     case_id: str,
     amount: float,
-    approver_roles: list[str],            # e.g. ["manager"]
-    approver_ids: Optional[list[str]] = None,   # Slack user IDs (for dual-approval check)
+    approver_roles: list[str],  # e.g. ["manager"]
+    approver_ids: Optional[
+        list[str]
+    ] = None,  # Slack user IDs (for dual-approval check)
     requester_id: Optional[str] = None,
     vendor_contact_id: Optional[str] = None,
     request_time: Optional[datetime] = None,
@@ -132,7 +135,9 @@ def analyze(
     if pre_metrics and "policy_violation" in pre_metrics:
         violated = bool(pre_metrics["policy_violation"])
         return PolicyResult(
-            case_id=case_id, amount=amount, tier="UNKNOWN",
+            case_id=case_id,
+            amount=amount,
+            tier="UNKNOWN",
             compliant=not violated,
             source_pointer=f"{case_id}/policy#matrix",
         )
@@ -147,74 +152,90 @@ def analyze(
     # ── Check 1: role authorisation ───────────────────────────────────────────
     allowed = tier_def["allowed_roles"]
     if not roles_set.intersection(allowed):
-        violations.append(PolicyViolation(
-            rule="unauthorized_role",
-            detail=(
-                f"${amount:,.0f} ({tier_name} tier) requires one of "
-                f"{sorted(allowed)!r} — got {sorted(roles_set)!r}"
-            ),
-            severity=0.80,
-        ))
+        violations.append(
+            PolicyViolation(
+                rule="unauthorized_role",
+                detail=(
+                    f"${amount:,.0f} ({tier_name} tier) requires one of "
+                    f"{sorted(allowed)!r} — got {sorted(roles_set)!r}"
+                ),
+                severity=0.80,
+            )
+        )
 
     # ── Check 2: dual approval ────────────────────────────────────────────────
     if tier_def["dual_approval"]:
         distinct_roles = roles_set.intersection(allowed)
         distinct_approvers = len(set(approver_ids or []))
         if distinct_approvers < 2 or len(distinct_roles) < 2:
-            violations.append(PolicyViolation(
-                rule="dual_approval_required",
-                detail=(
-                    f"{tier_name} tier (>${_prev_tier_limit(tier_name):,.0f}) "
-                    f"requires dual approval from two distinct authorised roles. "
-                    f"Received {distinct_approvers} approver(s)."
-                ),
-                severity=0.90,
-            ))
+            violations.append(
+                PolicyViolation(
+                    rule="dual_approval_required",
+                    detail=(
+                        f"{tier_name} tier (>${_prev_tier_limit(tier_name):,.0f}) "
+                        f"requires dual approval from two distinct authorised roles. "
+                        f"Received {distinct_approvers} approver(s)."
+                    ),
+                    severity=0.90,
+                )
+            )
 
     # ── Check 3: self-approval ────────────────────────────────────────────────
     if requester_id and vendor_contact_id and requester_id == vendor_contact_id:
-        violations.append(PolicyViolation(
-            rule="self_approval",
-            detail=(
-                f"Requester {requester_id!r} appears to also be the vendor "
-                f"contact — possible self-approval fraud pattern."
-            ),
-            severity=0.95,
-        ))
+        violations.append(
+            PolicyViolation(
+                rule="self_approval",
+                detail=(
+                    f"Requester {requester_id!r} appears to also be the vendor "
+                    f"contact — possible self-approval fraud pattern."
+                ),
+                severity=0.95,
+            )
+        )
 
     # ── Check 4: out-of-hours ─────────────────────────────────────────────────
     if request_time:
         t = request_time.time()
         lo, hi = _BUSINESS_HOURS
         if not (lo <= t <= hi):
-            violations.append(PolicyViolation(
-                rule="out_of_hours_approval",
-                detail=(
-                    f"Approval submitted at {t.strftime('%H:%M')} — "
-                    f"outside business hours ({lo.strftime('%H:%M')}–"
-                    f"{hi.strftime('%H:%M')})"
-                ),
-                severity=0.40,
-            ))
+            violations.append(
+                PolicyViolation(
+                    rule="out_of_hours_approval",
+                    detail=(
+                        f"Approval submitted at {t.strftime('%H:%M')} — "
+                        f"outside business hours ({lo.strftime('%H:%M')}–"
+                        f"{hi.strftime('%H:%M')})"
+                    ),
+                    severity=0.40,
+                )
+            )
 
     compliant = len(violations) == 0
     log.info(
         "policy: case=%s amount=%.2f tier=%s compliant=%s violations=%d",
-        case_id, amount, tier_name, compliant, len(violations),
+        case_id,
+        amount,
+        tier_name,
+        compliant,
+        len(violations),
     )
 
     return PolicyResult(
-        case_id=case_id, amount=amount, tier=tier_name,
-        compliant=compliant, violations=violations,
+        case_id=case_id,
+        amount=amount,
+        tier=tier_name,
+        compliant=compliant,
+        violations=violations,
         source_pointer=f"{case_id}/policy#matrix",
     )
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+
 def _classify_tier(amount: float) -> dict:
     for tier in _TIERS:
-        if amount <= tier["max_amount"]:
+        if amount <= cast(float, tier["max_amount"]):
             return tier
     return _TIERS[-1]
 
@@ -222,5 +243,5 @@ def _classify_tier(amount: float) -> dict:
 def _prev_tier_limit(tier_name: str) -> float:
     for i, t in enumerate(_TIERS):
         if t["name"] == tier_name and i > 0:
-            return _TIERS[i - 1]["max_amount"]
+            return cast(float, _TIERS[i - 1]["max_amount"])
     return 0.0

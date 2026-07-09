@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict
 from typing import Optional
+from contextlib import asynccontextmanager
 
 import psycopg  # type: ignore
 
@@ -28,17 +28,19 @@ from .models import (
     AgentResult,
     Case,
     Evidence,
-    SynthesizedRule,
 )
 from .pool import get_db_pool
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
+
+@asynccontextmanager
 async def _conn():
     """Context manager: borrow a connection from the pool."""
     pool = await get_db_pool()
-    return pool.connection()
+    async with pool.connection() as c:
+        yield c
 
 
 def _sha256(data: str) -> str:
@@ -46,6 +48,7 @@ def _sha256(data: str) -> str:
 
 
 # ─── Cases ───────────────────────────────────────────────────────────────────
+
 
 async def create_case(
     slack_channel: str,
@@ -65,11 +68,16 @@ async def create_case(
         VALUES (%s, %s, %s, %s, %s)
         RETURNING created_at, updated_at
     """
-    async with (_conn() if conn is None else _noop(conn)) as c:
+    async with _conn() if conn is None else _noop(conn) as c:
         row = await c.fetchone(
             sql,
-            (case.case_id, case.slack_channel, case.slack_ts,
-             case.reporter_slack_id, case.status),
+            (
+                case.case_id,
+                case.slack_channel,
+                case.slack_ts,
+                case.reporter_slack_id,
+                case.status,
+            ),
         )
         case.created_at = row[0]
         case.updated_at = row[1]
@@ -91,7 +99,7 @@ async def update_case_status(
         RETURNING case_id, slack_channel, slack_ts, reporter_slack_id,
                   status, risk_score, verdict, created_at, updated_at
     """
-    async with (_conn() if conn is None else _noop(conn)) as c:
+    async with _conn() if conn is None else _noop(conn) as c:
         row = await c.fetchone(sql, (status, risk_score, verdict, case_id))
     if row is None:
         raise LookupError(f"Case {case_id!r} not found")
@@ -108,7 +116,7 @@ async def get_case(
                status, risk_score, verdict, created_at, updated_at
         FROM cases WHERE case_id = %s
     """
-    async with (_conn() if conn is None else _noop(conn)) as c:
+    async with _conn() if conn is None else _noop(conn) as c:
         row = await c.fetchone(sql, (case_id,))
     return _row_to_case(row) if row else None
 
@@ -129,6 +137,7 @@ def _row_to_case(row) -> Case:
 
 # ─── Evidence ────────────────────────────────────────────────────────────────
 
+
 async def insert_evidence(
     case_id: str,
     evidence_type: str,
@@ -148,17 +157,23 @@ async def insert_evidence(
         VALUES (%s, %s, %s, %s, %s::jsonb)
         RETURNING created_at
     """
-    async with (_conn() if conn is None else _noop(conn)) as c:
+    async with _conn() if conn is None else _noop(conn) as c:
         row = await c.fetchone(
             sql,
-            (ev.evidence_id, ev.case_id, ev.evidence_type,
-             ev.file_url, json.dumps(ev.raw_metrics)),
+            (
+                ev.evidence_id,
+                ev.case_id,
+                ev.evidence_type,
+                ev.file_url,
+                json.dumps(ev.raw_metrics),
+            ),
         )
         ev.created_at = row[0]
     return ev
 
 
 # ─── Agent Results ────────────────────────────────────────────────────────────
+
 
 async def save_agent_results(
     case_id: str,
@@ -179,17 +194,23 @@ async def save_agent_results(
         VALUES (%s, %s, %s, %s::jsonb, %s::jsonb)
         RETURNING created_at
     """
-    async with (_conn() if conn is None else _noop(conn)) as c:
+    async with _conn() if conn is None else _noop(conn) as c:
         row = await c.fetchone(
             sql,
-            (ar.result_id, ar.case_id, ar.agent_name,
-             json.dumps(ar.claims), json.dumps(ar.contradictions)),
+            (
+                ar.result_id,
+                ar.case_id,
+                ar.agent_name,
+                json.dumps(ar.claims),
+                json.dumps(ar.contradictions),
+            ),
         )
         ar.created_at = row[0]
     return ar
 
 
 # ─── Audit Chain ─────────────────────────────────────────────────────────────
+
 
 async def append_audit_event(
     case_id: Optional[str],
@@ -211,7 +232,7 @@ async def append_audit_event(
         VALUES (%s, %s, %s::jsonb, %s, %s)
         RETURNING entry_id, created_at
     """
-    async with (_conn() if conn is None else _noop(conn)) as c:
+    async with _conn() if conn is None else _noop(conn) as c:
         prev_row = await c.fetchone(sql_prev)
         prev_hash = prev_row[0] if prev_row else ""
 
@@ -245,7 +266,7 @@ async def verify_audit_chain(
         SELECT entry_id, event_type, payload, prev_hash, entry_hash
         FROM audit_chain ORDER BY entry_id ASC
     """
-    async with (_conn() if conn is None else _noop(conn)) as c:
+    async with _conn() if conn is None else _noop(conn) as c:
         rows = await c.fetchall(sql)
 
     running_hash = ""
@@ -267,8 +288,15 @@ async def verify_audit_chain(
 
 # ─── connection context helper ────────────────────────────────────────────────
 
+
 class _noop:
     """Wrap an already-open connection so 'async with' is a no-op."""
-    def __init__(self, conn): self._conn = conn
-    async def __aenter__(self): return self._conn
-    async def __aexit__(self, *_): pass
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *_):
+        pass
