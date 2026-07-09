@@ -28,6 +28,7 @@ from .models import (
     AgentResult,
     Case,
     Evidence,
+    SynthesizedRule,
 )
 from .pool import get_db_pool
 
@@ -284,6 +285,96 @@ async def verify_audit_chain(
         running_hash = stored_hash
 
     return True, "OK"
+
+
+# ─── Synthesized Rules ────────────────────────────────────────────────────
+
+
+async def save_rule(
+    rule,  # sentinel.rules.schema.Rule
+    conn: Optional[psycopg.AsyncConnection] = None,
+) -> SynthesizedRule:
+    """INSERT a synthesized rule (always starts as shadow)."""
+    sql = """
+        INSERT INTO synthesized_rules
+            (rule_id, source_case_id, rule_json, status)
+        VALUES (%s, %s, %s::jsonb, %s)
+        RETURNING created_at
+    """
+    async with _conn() if conn is None else _noop(conn) as c:
+        row = await c.fetchone(
+            sql,
+            (
+                rule.rule_id,
+                rule.source_case_id,
+                json.dumps(rule.to_dict()),
+                rule.status,
+            ),
+        )
+    sr = SynthesizedRule(
+        rule_id=rule.rule_id,
+        source_case_id=rule.source_case_id,
+        rule_json=rule.to_dict(),
+        status=rule.status,
+    )
+    if row:
+        sr.created_at = row[0]
+    return sr
+
+
+async def list_rules(
+    status: Optional[str] = None,
+    conn: Optional[psycopg.AsyncConnection] = None,
+) -> list[SynthesizedRule]:
+    """SELECT all rules, optionally filtered by status ('shadow' or 'enforced')."""
+    if status:
+        sql = """
+            SELECT rule_id, source_case_id, rule_json, status, created_at
+            FROM synthesized_rules WHERE status = %s ORDER BY created_at DESC
+        """
+        params: tuple = (status,)
+    else:
+        sql = """
+            SELECT rule_id, source_case_id, rule_json, status, created_at
+            FROM synthesized_rules ORDER BY created_at DESC
+        """
+        params = ()
+    async with _conn() if conn is None else _noop(conn) as c:
+        rows = await c.fetchall(sql, params)
+    return [
+        SynthesizedRule(
+            rule_id=str(r[0]),
+            source_case_id=str(r[1]),
+            rule_json=r[2] if isinstance(r[2], dict) else json.loads(r[2]),
+            status=r[3],
+            created_at=r[4],
+        )
+        for r in (rows or [])
+    ]
+
+
+async def promote_rule(
+    rule_id: str,
+    conn: Optional[psycopg.AsyncConnection] = None,
+) -> SynthesizedRule:
+    """UPDATE a shadow rule to enforced status."""
+    sql = """
+        UPDATE synthesized_rules
+        SET status = 'enforced'
+        WHERE rule_id = %s
+        RETURNING rule_id, source_case_id, rule_json, status, created_at
+    """
+    async with _conn() if conn is None else _noop(conn) as c:
+        row = await c.fetchone(sql, (rule_id,))
+    if row is None:
+        raise LookupError(f"Rule {rule_id!r} not found")
+    return SynthesizedRule(
+        rule_id=str(row[0]),
+        source_case_id=str(row[1]),
+        rule_json=row[2] if isinstance(row[2], dict) else json.loads(row[2]),
+        status=row[3],
+        created_at=row[4],
+    )
 
 
 # ─── connection context helper ────────────────────────────────────────────────

@@ -41,6 +41,8 @@ from sentinel.agents import (
     policy_agent,
 )
 from sentinel.claims import Claim
+from sentinel.rules.synthesizer import synthesize_rule
+from sentinel.recall import recall as temporal_recall
 
 log = logging.getLogger(__name__)
 
@@ -161,6 +163,38 @@ async def investigate(event: dict[str, Any]) -> None:
         payload={"slack_channel": channel, "slack_ts": ts, "reporter": reporter},
     )
 
+    # ── 1b. Temporal Recall — find similar past cases (ticket #21) ────────────
+    # Pull claims_dict from the event text for a quick embedding lookup.
+    # (Full agent claims aren't available yet; we use event metadata.)
+    recall_query = event.get("text", "invoice fraud")
+    prior_cases = await temporal_recall(
+        case_id=case.case_id,
+        claims_dict={},          # will be backfilled after agents run
+        verdict="PENDING",
+        channel=channel,
+        rts_query=recall_query,
+    )
+    if prior_cases:
+        best = prior_cases[0]
+        prior_blurb = (
+            f":mag: *Prior similar case found* — "
+            f"`{best.case_id[:8]}` (similarity {best.similarity:.0%}, "
+            f"verdict `{best.verdict}`) [{best.found_via}]"
+        )
+        await app.client.chat_postMessage(
+            channel=channel,
+            thread_ts=ts,
+            text=prior_blurb,
+            blocks=[{
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": prior_blurb},
+            }],
+        )
+        log.info(
+            "Temporal recall: %d prior case(s) found for %s",
+            len(prior_cases), case.case_id,
+        )
+
     # Update the placeholder card with the real case ID
     short_id = case.case_id[:8]
     await app.client.chat_update(
@@ -225,6 +259,31 @@ async def investigate(event: dict[str, Any]) -> None:
         verdict_obj.verdict,
         verdict_obj.risk,
     )
+
+    # ── 4a. Self-Writing Rule Synthesis (ticket #26) ──────────────────────
+    synthesized_rule = None
+    if verdict_obj.verdict == "FRAUD_LIKELY":
+        synthesized_rule = synthesize_rule(case.case_id, verdict_obj, claims)
+        if synthesized_rule:
+            # Persist to DB (shadow status)
+            try:
+                await repo.save_rule(synthesized_rule)
+                log.info(
+                    "Shadow rule %s synthesized for case %s",
+                    synthesized_rule.rule_id[:8],
+                    case.case_id,
+                )
+                await repo.append_audit_event(
+                    case_id=case.case_id,
+                    event_type="rule_synthesized",
+                    payload={
+                        "rule_id": synthesized_rule.rule_id,
+                        "description": synthesized_rule.description,
+                        "status": "shadow",
+                    },
+                )
+            except Exception as e:
+                log.warning("Could not persist rule to DB: %s", e)
 
     # ── 4b. Graph Analytics (Blast Radius) on Confirmed Threat ──────────────
     if verdict_obj.verdict == "FRAUD_LIKELY":

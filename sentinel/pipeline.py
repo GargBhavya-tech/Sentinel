@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from .claims import Verdict, Claim
 from .reconciler import reconcile
+from .rules.engine import match_rules
+from .rules.schema import Rule
 
 # Hard, single-signal thresholds for the OFF baseline. Each corresponds to one
 # agent screaming on its own. If none scream individually, the baseline is CLEAR.
@@ -26,7 +28,24 @@ SOLO_VOICE = 0.90  # an extreme voice-spoof score
 SOLO_DOMAIN_DAYS = 3  # a domain registered in the last couple of days
 
 
-def run_case(claims: list[Claim], contradiction_engine: str = "on") -> Verdict:
+def run_case(
+    claims: list[Claim],
+    contradiction_engine: str = "on",
+    enforced_rules: list[Rule] | None = None,
+) -> Verdict:
+    # ── 0. Check enforced rules first (fast path) ──────────────────────────
+    if contradiction_engine == "on" and enforced_rules:
+        matched = match_rules(claims, enforced_rules)
+        if matched:
+            return Verdict(
+                risk=0.95,
+                verdict=matched.verdict,
+                contradictions=[],
+                counterfactual=(
+                    f"Matched enforced rule {matched.rule_id[:8]}: "
+                    f"{matched.description}"
+                ),
+            )
     if contradiction_engine == "on":
         return reconcile(claims)
     if contradiction_engine == "off":
