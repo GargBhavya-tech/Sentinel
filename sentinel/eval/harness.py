@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from ..pipeline import run_case
+from ..agents.mock_agents import extract_claims
 from .dataset import Case, seed_dataset
 
 
@@ -41,7 +42,9 @@ def _score(cases: Iterable[Case], engine: str) -> tuple[Metrics, set[str]]:
     tp = fp = tn = fn = 0
     caught_fraud_ids: set[str] = set()
     for c in cases:
-        pred = 1 if run_case(c.id, c.metrics, contradiction_engine=engine).is_flagged else 0
+        claims = extract_claims(c.id, c.metrics)
+        pred = 1 if run_case(claims, contradiction_engine=engine).is_flagged else 0
+
         if c.label == 1 and pred == 1:
             tp += 1
             caught_fraud_ids.add(c.id)

@@ -28,9 +28,20 @@ import logging
 from dataclasses import asdict
 from typing import Any
 
+import asyncio
 from sentinel.db import repo
 from sentinel.pipeline import run_case
 from sentinel.slack_app import app
+from sentinel.agents import (
+    vision_agent,
+    finance_agent,
+    stylometric_agent,
+    voice_agent,
+    threat_intel_agent,
+    nlp_agent,
+    policy_agent
+)
+from sentinel.claims import Claim
 
 log = logging.getLogger(__name__)
 
@@ -144,10 +155,26 @@ async def investigate(event: dict[str, Any]) -> None:
     # ── 2. Update status → analyzing ─────────────────────────────────────────
     await repo.update_case_status(case.case_id, status="analyzing")
 
-    # ── 3. Build metrics (Phase 0 stub — replaced by real agents in Phase 2) ──
-    # In Phase 0 we have no files to parse yet, so metrics are zeroed-out.
-    # The pipeline still runs end-to-end — it will return CLEAR on empty metrics.
-    metrics: dict[str, Any] = {}
+    # ── 3. Build claims (Phase 2 real agents) ─────────────────────────────────
+    # Run all agents concurrently using asyncio.to_thread
+    agent_tasks = [
+        asyncio.to_thread(vision_agent.analyze, case.case_id),
+        asyncio.to_thread(finance_agent.analyze, case.case_id),
+        asyncio.to_thread(stylometric_agent.analyze, case.case_id),
+        asyncio.to_thread(voice_agent.analyze, case.case_id),
+        asyncio.to_thread(threat_intel_agent.analyze, case.case_id),
+        asyncio.to_thread(nlp_agent.analyze, case.case_id),
+        asyncio.to_thread(policy_agent.analyze, case.case_id),
+    ]
+    
+    results = await asyncio.gather(*agent_tasks, return_exceptions=True)
+    claims: list[Claim] = []
+    
+    for res in results:
+        if isinstance(res, Exception):
+            log.error("Agent failed: %s", res)
+        elif hasattr(res, "to_claims"):
+            claims.extend(res.to_claims())
 
     # If the event contains file attachments, store them as evidence stubs.
     for f in event.get("files", []):
@@ -160,8 +187,21 @@ async def investigate(event: dict[str, Any]) -> None:
         log.info("Evidence stored: %s", f.get("name"))
 
     # ── 4. Run contradiction engine ───────────────────────────────────────────
-    verdict_obj = run_case(case_id=case.case_id, metrics=metrics)
+    verdict_obj = run_case(claims=claims)
     log.info("Case %s verdict: %s (risk=%.3f)", case.case_id, verdict_obj.verdict, verdict_obj.risk)
+
+    # ── 4b. Graph Analytics (Blast Radius) on Confirmed Threat ──────────────
+    if verdict_obj.verdict == "FRAUD_LIKELY":
+        from sentinel.graph.cache import neighbors
+        from sentinel.graph.analytics import analyze_blast_radius
+        # Run BFS to find blast radius
+        blast_nodes = await neighbors(reporter, depth=2)
+        if blast_nodes:
+            log.info("Blast radius for %s: %d nodes touched", reporter, len(blast_nodes))
+        # Run PageRank and Clusters
+        graph_stats = analyze_blast_radius([reporter])
+        if graph_stats.get("super_spreader"):
+            log.info("Identified super-spreader: %s", graph_stats["super_spreader"])
 
     # ── 5. Persist agent results ──────────────────────────────────────────────
     # Serialize Claim / Contradiction dataclasses to plain dicts for JSONB

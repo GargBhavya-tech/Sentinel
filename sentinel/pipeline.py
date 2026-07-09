@@ -16,8 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .agents.mock_agents import extract_claims
-from .claims import Verdict
+from .claims import Verdict, Claim
 from .reconciler import reconcile
 
 # Hard, single-signal thresholds for the OFF baseline. Each corresponds to one
@@ -28,29 +27,35 @@ SOLO_VOICE = 0.90        # an extreme voice-spoof score
 SOLO_DOMAIN_DAYS = 3     # a domain registered in the last couple of days
 
 
-def run_case(case_id: str, metrics: dict[str, Any], contradiction_engine: str = "on") -> Verdict:
-    claims = extract_claims(case_id, metrics)
+def run_case(claims: list[Claim], contradiction_engine: str = "on") -> Verdict:
     if contradiction_engine == "on":
         return reconcile(claims)
     if contradiction_engine == "off":
-        return _single_model_baseline(metrics)
+        return _single_model_baseline(claims)
     raise ValueError("contradiction_engine must be 'on' or 'off'")
 
 
-def _single_model_baseline(m: dict[str, Any]) -> Verdict:
+def _single_model_baseline(claims: list[Claim]) -> Verdict:
     """Per-agent scoring with no cross-examination (the baseline everyone ships)."""
-    visual = m.get("visual_total")
-    structured = m.get("structured_total")
+    claims_dict = {c.field: c.value for c in claims}
+    
+    visual = claims_dict.get("visual_total")
+    structured = claims_dict.get("structured_total")
+    tone_anomaly = claims_dict.get("tone_anomaly", 0.0)
+    voice_mismatch = claims_dict.get("voice_mismatch", 0.0)
+    domain_age_days = claims_dict.get("domain_age_days", 999)
+    injection_present = bool(claims_dict.get("injection_present", False))
+
     ratio = 1.0
     if visual and structured:
         ratio = max(visual, structured) / max(min(visual, structured), 1e-9)
 
     solo_hit = (
         ratio >= SOLO_RATIO
-        or m.get("tone_anomaly", 0.0) >= SOLO_TONE
-        or m.get("voice_mismatch", 0.0) >= SOLO_VOICE
-        or m.get("domain_age_days", 999) <= SOLO_DOMAIN_DAYS
-        or bool(m.get("injection_present", False))
+        or tone_anomaly >= SOLO_TONE
+        or voice_mismatch >= SOLO_VOICE
+        or domain_age_days <= SOLO_DOMAIN_DAYS
+        or injection_present
     )
     verdict = "FRAUD_LIKELY" if solo_hit else "CLEAR"
     risk = 0.9 if solo_hit else 0.05

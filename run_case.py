@@ -11,12 +11,14 @@ import sys
 
 from sentinel.eval.dataset import flagship_case
 from sentinel.pipeline import run_case
+from sentinel.agents.mock_agents import extract_claims
 
 
 def main() -> None:
     engine = "off" if "--off" in sys.argv else "on"
     case = flagship_case()
-    v = run_case(case.id, case.metrics, contradiction_engine=engine)
+    claims = extract_claims(case.id, case.metrics)
+    v = run_case(claims, contradiction_engine=engine)
 
     print(f"\nCase {case.id}  [ground truth: {'FRAUD' if case.label else 'LEGIT'}]")
     print(f"  {case.note}")
