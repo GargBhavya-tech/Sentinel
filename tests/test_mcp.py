@@ -16,7 +16,7 @@ def test_initialize_returns_server_info():
     assert "protocolVersion" in resp["result"]
 
 
-def test_tools_list_returns_all_five_tools():
+def test_tools_list_returns_all_tools():
     resp = dispatch({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
     tool_names = {t["name"] for t in resp["result"]["tools"]}
     assert tool_names == {
@@ -25,6 +25,7 @@ def test_tools_list_returns_all_five_tools():
         "blast_radius",
         "synthesize_rule",
         "expected_loss",
+        "quarantine",
     }
 
 

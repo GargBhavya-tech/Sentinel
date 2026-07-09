@@ -7,5 +7,13 @@ rather than hammering the RTS API live.
 """
 
 from .cache import ingest_event, neighbors, get_graph_snapshot, get_graph
+from .blast_radius import blast_radius, blast_radius_sync, BlastRadiusResult
+from .quarantine import quarantine, lift_quarantine, is_quarantined, get_quarantine_log
+from .campaign import build_campaign_summary, CampaignSummary
 
-__all__ = ["ingest_event", "neighbors", "get_graph_snapshot", "get_graph"]
+__all__ = [
+    "ingest_event", "neighbors", "get_graph_snapshot", "get_graph",
+    "blast_radius", "blast_radius_sync", "BlastRadiusResult",
+    "quarantine", "lift_quarantine", "is_quarantined", "get_quarantine_log",
+    "build_campaign_summary", "CampaignSummary",
+]
