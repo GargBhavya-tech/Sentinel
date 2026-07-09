@@ -19,3 +19,12 @@ psycopg-pool>=3.2          # connection pool (separate package from psycopg)
 
 # ── Phase 0 — #3 Local Graph Cache ───────────────────────────────────────────
 networkx>=3.2              # in-memory graph (BFS, PageRank for #19/#20)
+
+# ── Phase 2 — Specialist Agents ───────────────────────────────────────────────
+numpy>=1.24                # numerical computing (all agents)
+scipy>=1.11                # cosine similarity, stats (#11 stylometric)
+Pillow>=10.0               # image handling (#7 vision)
+pdfminer.six>=20221105     # PDF text extraction (#7 vision, no binary needed)
+soundfile>=0.12            # audio file I/O (#12 voice)
+# pytesseract>=0.3.10      # optional: OCR (requires Tesseract binary)
+# librosa>=0.10            # optional: richer audio features (#12 voice)
