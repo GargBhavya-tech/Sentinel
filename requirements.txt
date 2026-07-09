@@ -1,0 +1,11 @@
+# Core spine (reconciler + eval harness) uses only the Python standard library.
+# Tests:
+pytest>=7.0
+
+# --- Reserved for later build-map tickets (not needed to run the core) ---
+# slack-bolt>=1.18        # #1 Slack app
+# fastapi>=0.110          # #1 async gateway
+# uvicorn>=0.29           # #1 local server
+# pydantic>=2.6           # #1 payload validation
+# networkx>=3.2           # #19/#20 blast-radius BFS + PageRank
+# psycopg[binary]>=3.1    # #2 PostgreSQL
