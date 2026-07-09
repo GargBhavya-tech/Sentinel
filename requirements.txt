@@ -1,11 +1,21 @@
-# Core spine (reconciler + eval harness) uses only the Python standard library.
-# Tests:
-pytest>=7.0
+# ── Core spine (reconciler + eval harness) ──────────────────────────────────
+# (uses only the Python standard library — no installs needed for the core)
 
-# --- Reserved for later build-map tickets (not needed to run the core) ---
-# slack-bolt>=1.18        # #1 Slack app
-# fastapi>=0.110          # #1 async gateway
-# uvicorn>=0.29           # #1 local server
-# pydantic>=2.6           # #1 payload validation
-# networkx>=3.2           # #19/#20 blast-radius BFS + PageRank
-# psycopg[binary]>=3.1    # #2 PostgreSQL
+# ── Testing ──────────────────────────────────────────────────────────────────
+pytest>=7.0
+pytest-asyncio>=0.23       # async test support
+httpx>=0.27                # TestClient for FastAPI in tests
+
+# ── Phase 0 — #1 Async Slack Gateway ─────────────────────────────────────────
+slack-bolt>=1.18           # Bolt for Python (Slack app framework)
+fastapi>=0.110             # async HTTP gateway
+uvicorn[standard]>=0.29    # ASGI server
+pydantic>=2.6              # payload validation
+python-dotenv>=1.0         # .env loading
+
+# ── Phase 0 — #2 Database & Case Lifecycle ───────────────────────────────────
+psycopg[binary]>=3.1       # async PostgreSQL driver
+psycopg-pool>=3.2          # connection pool (separate package from psycopg)
+
+# ── Phase 0 — #3 Local Graph Cache ───────────────────────────────────────────
+networkx>=3.2              # in-memory graph (BFS, PageRank for #19/#20)
