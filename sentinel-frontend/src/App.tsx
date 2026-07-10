@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence, useScroll, useTransform } from 'motion/react';
 import { RefreshCw } from 'lucide-react';
 import Navbar from './components/Navbar';
@@ -9,21 +9,13 @@ import HowSentinelThinks from './components/HowSentinelThinks';
 import EasterEgg from './components/EasterEgg';
 import PlatformTransition from './components/PlatformTransition';
 import DashboardConsole from './components/DashboardConsole';
-import EvidenceSubmitModal from './components/EvidenceSubmitModal';
-import { useInvestigation } from './hooks/useInvestigation';
-import { InvestigatePayload } from './api/sentinel';
+import CustomCursor from './components/CustomCursor';
 
 type ViewState = 'landing' | 'transitioning' | 'dashboard';
 
 export default function App() {
   const [viewState, setViewState] = useState<ViewState>('landing');
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const { scrollY } = useScroll();
-
-  // The shared investigation state — passed from modal → App → DashboardConsole
-  const investigation = useInvestigation();
-  // Store the payload so we can fire startInvestigation after the transition completes
-  const [pendingPayload, setPendingPayload] = useState<InvestigatePayload | null>(null);
 
   // Create subtle parallax translation and fading for background layers
   const backgroundY = useTransform(scrollY, [0, 4000], [0, 400]);
@@ -33,6 +25,7 @@ export default function App() {
   const handleNavClick = (sectionId: string) => {
     if (viewState !== 'landing') {
       setViewState('landing');
+      // Give state a brief moment to render before scrolling
       setTimeout(() => {
         const element = document.getElementById(sectionId);
         if (element) {
@@ -47,39 +40,21 @@ export default function App() {
     }
   };
 
-  // "Deploy Investigator" → open modal (landing page stays fully visible)
-  const handleEnterConsole = useCallback(() => {
-    setIsModalOpen(true);
-  }, []);
-
-  // Modal "Deploy" button → store payload, close modal, start transition
-  const handleModalDeploy = useCallback((payload: InvestigatePayload) => {
-    setPendingPayload(payload);
-    setIsModalOpen(false);
+  const handleEnterConsole = () => {
     setViewState('transitioning');
-  }, []);
+  };
 
-  // Transition animation completes → switch to dashboard and fire the investigation
-  const handleTransitionComplete = useCallback(() => {
+  const handleTransitionComplete = () => {
     setViewState('dashboard');
     window.scrollTo(0, 0);
-    if (pendingPayload) {
-      // Start the real investigation — SSE stream begins
-      investigation.startInvestigation(pendingPayload);
-      setPendingPayload(null);
-    }
-  }, [pendingPayload, investigation]);
+  };
 
   return (
     <div className="bg-obsidian min-h-screen relative font-sans text-slate-white overflow-x-hidden selection:bg-electric-cyan selection:text-obsidian">
       
-      {/* Evidence Submit Modal — renders on top of landing page */}
-      <EvidenceSubmitModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onDeploy={handleModalDeploy}
-      />
-
+      {/* Global premium custom cursor */}
+      <CustomCursor />
+      
       {/* Scroll-Linked Parallax Technical Grid & Glowing Ambient Depth */}
       <motion.div 
         className="fixed inset-0 pointer-events-none z-0"
@@ -150,7 +125,7 @@ export default function App() {
             <footer className="border-t border-slate-white/5 py-12 bg-obsidian relative z-10">
               <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-6">
                 <div>
-                  <span className="font-display font-black text-xs tracking-widest text-slate-white uppercase block">SENTINEL</span>
+                  <span className="font-display font-black text-xs tracking-widest text-slate-white uppercase">SENTINEL</span>
                   <p className="font-mono text-[9px] text-slate-white/30 mt-1 uppercase">ALL SYSTEM ASSETS SECURED // OPERATIONAL VERSION 2.8</p>
                 </div>
                 <div className="flex gap-8 font-mono text-[9px] text-slate-white/30 tracking-wider">
@@ -190,13 +165,7 @@ export default function App() {
             transition={{ duration: 0.8 }}
             className="h-screen w-screen"
           >
-            <DashboardConsole
-              onExit={() => {
-                investigation.resetInvestigation();
-                setViewState('landing');
-              }}
-              investigation={investigation}
-            />
+            <DashboardConsole onExit={() => setViewState('landing')} />
           </motion.div>
         )}
       </AnimatePresence>

@@ -67,3 +67,11 @@ body {
   scrollbar-width: none;
 }
 
+/* Hide native cursor for desktop devices to support the custom cursor throughout */
+@media (pointer: fine) {
+  html, body, a, button, [role="button"], input, select, textarea, .cursor-pointer {
+    cursor: none !important;
+  }
+}
+
+
