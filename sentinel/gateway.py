@@ -1,35 +1,45 @@
-"""FastAPI application — the async Slack gateway (build-map ticket #1).
+"""FastAPI application — the async Slack + React gateway (build-map ticket #1).
 
 Responsibilities
 ----------------
-1. Mount the Slack Bolt ASGI app on `POST /slack/events` so Slack can reach
-   the app over HTTP.
-2. ACK every webhook inside Slack's 3-second window.
+1. Mount the Slack Bolt ASGI app on `POST /slack/events`.
+2. ACK every Slack webhook inside Slack's 3-second window.
 3. Hand heavy work to `BackgroundTasks` (never do it in-handler).
-4. Expose REST endpoints for the React console and judges.
+4. Expose REST + SSE endpoints for the React console and judges.
 
 Routes
 ------
-  POST /slack/events        — Slack webhook (Bolt handles internally)
-  GET  /health              — liveness probe
-  GET  /cases/{case_id}     — fetch a case by ID (for the React console)
-  GET  /graph/snapshot      — current graph cache as JSON (for the force-directed UI)
-  GET  /audit/verify        — verify the hash-chained audit log is intact
-
-Startup / shutdown
-------------------
-The FastAPI lifespan context manager opens the DB pool on startup and
-closes it on shutdown, so every request has a ready connection.
+  POST /slack/events                     — Slack webhook (Bolt handles internally)
+  GET  /health                           — liveness probe
+  GET  /cases/{case_id}                  — fetch a case by ID
+  GET  /cases                            — list recent cases
+  GET  /cases/{case_id}/audit            — audit chain for a case
+  POST /api/investigate                  — start investigation from React console
+  GET  /api/investigate/{case_id}/stream — SSE stream of investigation events
+  GET  /api/rules                        — list shadow/enforced rules
+  POST /api/rules/{rule_id}/promote      — promote shadow rule to enforced
+  GET  /api/metrics                      — eval harness metrics (ticket #34)
+  GET  /api/active-learning/status       — active learning status (ticket #28)
+  POST /api/active-learning/label        — submit human label (ticket #28)
+  GET  /graph/snapshot                   — current graph cache as JSON
+  GET  /audit/verify                     — verify the hash-chained audit log
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from slack_bolt.adapter.fastapi.async_handler import AsyncSlackRequestHandler  # type: ignore
 
 # ── env & logging ─────────────────────────────────────────────────────────────
@@ -46,6 +56,11 @@ from sentinel.db import repo  # noqa: E402
 from sentinel.graph.cache import get_graph_snapshot  # noqa: E402
 from sentinel.slack_app import app as bolt_app  # noqa: E402
 from sentinel.worker import investigate  # noqa: E402
+from sentinel.sse_worker import (  # noqa: E402
+    investigate_streaming,
+    create_case_queue,
+    get_case_queue,
+)
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -63,30 +78,46 @@ async def lifespan(api: FastAPI):
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 api = FastAPI(
     title="Sentinel Gateway",
-    version="0.1.0",
-    description="Slack-native fraud investigator — Phase 0 gateway",
+    version="0.2.0",
+    description="Slack-native fraud investigator — gateway + React console API",
     lifespan=lifespan,
+)
+
+# CORS — allow the Vite dev server and any origin during hackathon judging
+api.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # lock down to specific origins in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 handler = AsyncSlackRequestHandler(bolt_app)
 
 
-# ── Slack events endpoint ─────────────────────────────────────────────────────
+# ── Request models ────────────────────────────────────────────────────────────
 
+class InvestigateRequest(BaseModel):
+    description: str = "suspicious invoice"
+    amount_at_risk: float = 0.0
+    file_url: str | None = None
+    channel: str = "C_DEMO"
+    reporter: str = "U_DEMO"
+    demo_case: bool = False           # load the flagship demo case signals
+
+
+class LabelRequest(BaseModel):
+    case_id: str
+    label: int                        # 0 = legitimate, 1 = fraud
+
+
+# ── Slack events endpoint ─────────────────────────────────────────────────────
 
 @api.post("/slack/events")
 async def slack_events(req: Request, background_tasks: BackgroundTasks) -> Response:
-    """Receive Slack webhook, ACK < 5ms, queue background work.
-
-    Bolt's handler verifies the HMAC-SHA256 signature and dispatches to the
-    correct Bolt listener. The `app_mention` listener in slack_app.py posts
-    the immediate acknowledgement card, then this function enqueues the real
-    investigation worker.
-    """
-    # Bolt processes the request; this handles sig verification + event routing.
+    """Receive Slack webhook, ACK <5ms, queue background work."""
     bolt_resp = await handler.handle(req)
 
-    # If it's an app_mention, fire the investigation out-of-band
     body = (
         await req.json()
         if req.headers.get("content-type") == "application/json"
@@ -103,13 +134,117 @@ async def slack_events(req: Request, background_tasks: BackgroundTasks) -> Respo
     return bolt_resp
 
 
-# ── REST endpoints ────────────────────────────────────────────────────────────
+# ── React Console: Start investigation ────────────────────────────────────────
 
+@api.post("/api/investigate")
+async def start_investigation(
+    body: InvestigateRequest,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    """Start a Sentinel investigation from the React console.
+
+    Returns the case_id immediately. The client then subscribes to
+    GET /api/investigate/{case_id}/stream to receive SSE events.
+    """
+    # Create DB case
+    case = await repo.create_case(
+        slack_channel=body.channel,
+        slack_ts=str(uuid.uuid4()),
+        reporter_slack_id=body.reporter,
+    )
+    log.info("React console investigation started — case %s", case.case_id[:8])
+
+    # Create SSE queue before launching background task
+    q = create_case_queue(case.case_id)
+
+    # Override with flagship demo signals if requested
+    description = body.description
+    amount = body.amount_at_risk
+    if body.demo_case:
+        description = (
+            "Cloned CEO voice note requesting urgent wire transfer of $1,450,000 "
+            "to routing number RT_912000031 at offshore Belize entity. "
+            "Invoice total mismatch detected. VPN geolocation mismatch."
+        )
+        amount = 1_450_000.0
+
+    # Launch streaming worker as background task
+    background_tasks.add_task(
+        investigate_streaming,
+        case_id=case.case_id,
+        q=q,
+        event_text=description,
+        amount_at_risk=amount,
+        channel=body.channel,
+        reporter=body.reporter,
+    )
+
+    return {
+        "case_id": case.case_id,
+        "short_id": case.case_id[:8],
+        "stream_url": f"/api/investigate/{case.case_id}/stream",
+        "status": "started",
+    }
+
+
+# ── React Console: SSE stream ─────────────────────────────────────────────────
+
+@api.get("/api/investigate/{case_id}/stream")
+async def stream_investigation(case_id: str) -> StreamingResponse:
+    """Server-Sent Events stream for a running investigation.
+
+    The client opens this with EventSource. Events are JSON objects with
+    `event` (type string) and `data` (payload dict) fields.
+
+    The stream ends when a `stream_end` event is received.
+    """
+    async def event_generator() -> AsyncGenerator[str, None]:
+        # Wait up to 10s for the queue to appear (background task may not have
+        # started yet when the client connects immediately after POST)
+        for _ in range(100):
+            q = get_case_queue(case_id)
+            if q is not None:
+                break
+            await asyncio.sleep(0.1)
+        else:
+            yield f"data: {json.dumps({'event': 'error', 'data': {'message': 'Case queue not found'}})}\n\n"
+            return
+
+        while True:
+            try:
+                item = await asyncio.wait_for(q.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                # Keepalive comment to prevent connection drop
+                yield ": keepalive\n\n"
+                continue
+
+            if item is None:
+                break
+
+            event_type = item.get("event", "data")
+            payload = json.dumps(item)
+            yield f"event: {event_type}\ndata: {payload}\n\n"
+
+            if event_type == "stream_end":
+                break
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+# ── REST endpoints ────────────────────────────────────────────────────────────
 
 @api.get("/health")
 async def health() -> dict:
     """Liveness probe — returns 200 + service info when the server is up."""
-    return {"status": "ok", "service": "sentinel-gateway", "version": "0.1.0"}
+    return {"status": "ok", "service": "sentinel-gateway", "version": "0.2.0"}
 
 
 @api.get("/cases/{case_id}")
@@ -119,8 +254,115 @@ async def get_case(case_id: str) -> dict:
     if case is None:
         raise HTTPException(status_code=404, detail=f"Case {case_id!r} not found")
     from dataclasses import asdict
-
     return asdict(case)
+
+
+@api.get("/cases")
+async def list_cases(limit: int = 20) -> dict:
+    """List recent cases for the dashboard queue."""
+    try:
+        cases = await repo.list_cases(limit=limit)
+        return {
+            "cases": [
+                {
+                    "case_id": c.case_id,
+                    "short_id": c.case_id[:8],
+                    "status": c.status,
+                    "verdict": c.verdict,
+                    "risk_score": c.risk_score,
+                    "created_at": str(c.created_at) if hasattr(c, "created_at") else "",
+                }
+                for c in cases
+            ]
+        }
+    except Exception as e:
+        log.warning("list_cases failed: %s", e)
+        return {"cases": []}
+
+
+@api.get("/cases/{case_id}/audit")
+async def get_audit_chain(case_id: str) -> dict:
+    """Return the audit chain for a specific case."""
+    try:
+        chain = await repo.get_audit_chain(case_id)
+        return {"case_id": case_id, "entries": chain}
+    except Exception as e:
+        log.warning("get_audit_chain failed: %s", e)
+        return {"case_id": case_id, "entries": []}
+
+
+@api.get("/api/rules")
+async def list_rules() -> dict:
+    """List shadow and enforced detection rules."""
+    try:
+        rules = await repo.list_rules()
+        return {
+            "rules": [
+                {
+                    "rule_id": r.rule_id if hasattr(r, "rule_id") else r.get("rule_id", ""),
+                    "description": r.description if hasattr(r, "description") else r.get("description", ""),
+                    "status": r.status if hasattr(r, "status") else r.get("status", "shadow"),
+                    "created_at": str(r.created_at) if hasattr(r, "created_at") else "",
+                }
+                for r in rules
+            ]
+        }
+    except Exception as e:
+        log.warning("list_rules failed: %s", e)
+        return {"rules": []}
+
+
+@api.post("/api/rules/{rule_id}/promote")
+async def promote_rule(rule_id: str) -> dict:
+    """Promote a shadow rule to enforced status."""
+    try:
+        await repo.promote_rule(rule_id)
+        await repo.append_audit_event(
+            case_id="system",
+            event_type="rule_promoted",
+            payload={"rule_id": rule_id, "new_status": "enforced"},
+        )
+        return {"rule_id": rule_id, "status": "enforced", "message": "Rule promoted to enforced."}
+    except Exception as e:
+        log.error("promote_rule failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api.get("/api/metrics")
+async def get_metrics() -> dict:
+    """Run eval harness and return precision/recall/F1 + ablation numbers."""
+    try:
+        from sentinel.eval.harness import ablation, headline_number
+        a = ablation()
+        headline = headline_number()
+        return {
+            "headline": headline,
+            "engine_on": a["on"],
+            "engine_off": a["off"],
+            "recall_gain": a["recall_gain"],
+            "frauds_caught_by_engine_only": a["frauds_caught_by_engine_only"],
+            "n_caught_by_engine_only": a["n_caught_by_engine_only"],
+            "total_cases": a["n"],
+        }
+    except Exception as e:
+        log.warning("metrics failed: %s", e)
+        return {"error": str(e)}
+
+
+@api.get("/api/active-learning/status")
+async def active_learning_status() -> dict:
+    """Return the current active-learning status (ticket #28)."""
+    from sentinel.eval.active_learning import get_status
+    return get_status()
+
+
+@api.post("/api/active-learning/label")
+async def submit_label(body: LabelRequest) -> dict:
+    """Submit a human label for an uncertain case (ticket #28)."""
+    from sentinel.eval.active_learning import submit_label, compute_accuracy_lift
+    result = submit_label(body.case_id, body.label)
+    lift = compute_accuracy_lift()
+    return {**result, "accuracy_lift": lift.__dict__}
 
 
 @api.get("/graph/snapshot")

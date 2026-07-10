@@ -21,5 +21,40 @@ services:
       timeout: 3s
       retries: 10
 
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sentinel_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://sentinel:sentinel@db:5432/sentinel
+      HOST: 0.0.0.0
+      PORT: "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    command: uvicorn sentinel.gateway:api --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    image: node:20-alpine
+    container_name: sentinel_frontend
+    working_dir: /app
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      - VITE_API_URL=http://backend:8000
+      - DISABLE_HMR=false
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./sentinel-frontend:/app
+    command: sh -c "npm install && npm run dev"
+
 volumes:
   sentinel_pgdata:

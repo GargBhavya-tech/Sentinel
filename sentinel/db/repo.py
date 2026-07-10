@@ -377,6 +377,57 @@ async def promote_rule(
     )
 
 
+
+# ─── List Cases ──────────────────────────────────────────────────────────────
+
+
+async def list_cases(
+    limit: int = 20,
+    conn=None,
+) -> list[Case]:
+    """SELECT the most recent cases ordered by created_at DESC."""
+    sql = """
+        SELECT case_id, slack_channel, slack_ts, reporter_slack_id,
+               status, risk_score, verdict, created_at, updated_at
+        FROM cases
+        ORDER BY created_at DESC
+        LIMIT %s
+    """
+    async with _conn() if conn is None else _noop(conn) as c:
+        rows = await c.fetchall(sql, (limit,))
+    return [_row_to_case(r) for r in (rows or [])]
+
+
+# ─── Audit Chain for a Case ───────────────────────────────────────────────────
+
+
+async def get_audit_chain(
+    case_id: str,
+    conn=None,
+) -> list[dict]:
+    """Return all audit entries for a specific case."""
+    sql = """
+        SELECT entry_id, case_id, event_type, payload, prev_hash, entry_hash, created_at
+        FROM audit_chain
+        WHERE case_id = %s
+        ORDER BY entry_id ASC
+    """
+    async with _conn() if conn is None else _noop(conn) as c:
+        rows = await c.fetchall(sql, (case_id,))
+    result = []
+    for r in (rows or []):
+        result.append({
+            "entry_id": r[0],
+            "case_id": str(r[1]),
+            "event_type": r[2],
+            "payload": r[3] if isinstance(r[3], dict) else {},
+            "prev_hash": r[4][:16] + "…" if r[4] else "",
+            "entry_hash": r[5][:16] + "…" if r[5] else "",
+            "created_at": str(r[6]) if r[6] else "",
+        })
+    return result
+
+
 # ─── connection context helper ────────────────────────────────────────────────
 
 
