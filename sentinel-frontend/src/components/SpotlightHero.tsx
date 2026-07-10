@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, MouseEvent } from 'react';
 import { motion, useMotionValue, useSpring, useTransform } from 'motion/react';
 import { 
   AlertCircle, FileText, Phone, ArrowRight, ShieldCheck, Play, 
-  Fingerprint, Lock, Globe, Terminal, Activity, Scan 
+  Fingerprint, Lock, Globe, Terminal, Activity, Scan, ChevronDown
 } from 'lucide-react';
 import { playTick, playClick } from '../utils/audio';
 
@@ -153,6 +153,14 @@ export default function SpotlightHero({ onDeployClick, onExploreClick }: Spotlig
   const handleExploreClick = () => {
     playClick();
     onExploreClick();
+  };
+
+  const handleScrollDown = () => {
+    playClick();
+    const element = document.getElementById('features');
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth' });
+    }
   };
 
   return (
@@ -395,6 +403,44 @@ export default function SpotlightHero({ onDeployClick, onExploreClick }: Spotlig
           GRID SYNCHRONIZATION: COMPLETE
         </span>
       </div>
+
+      {/* Cybernetic Animated Scroll Down Indicator */}
+      <motion.div
+        initial={{ opacity: 0, y: 15 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 1, delay: 0.8 }}
+        onClick={handleScrollDown}
+        onMouseEnter={() => playTick()}
+        className="absolute bottom-8 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-2 cursor-pointer group pointer-events-auto"
+      >
+        <div className="flex flex-col items-center px-4 py-2.5 rounded-full border border-electric-cyan/25 bg-obsidian/90 backdrop-blur-md shadow-[0_0_15px_rgba(56,189,248,0.08)] group-hover:border-electric-cyan/60 group-hover:shadow-[0_0_20px_rgba(56,189,248,0.25)] transition-all duration-300">
+          <div className="flex items-center gap-2.5">
+            {/* Pulsing indicator dot */}
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-electric-cyan opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-electric-cyan"></span>
+            </span>
+            <span className="font-mono text-[10px] font-bold tracking-[0.25em] text-slate-white group-hover:text-electric-cyan transition-colors duration-300 uppercase">
+              SCROLL DOWN TO EXPLORE
+            </span>
+          </div>
+        </div>
+
+        {/* Dynamic Downward Arrow Indicator */}
+        <motion.div 
+          animate={{
+            y: [0, 5, 0],
+          }}
+          transition={{
+            duration: 1.5,
+            repeat: Infinity,
+            ease: "easeInOut",
+          }}
+          className="flex items-center justify-center w-8 h-8 rounded-full border border-slate-white/10 bg-slate-white/5 group-hover:bg-electric-cyan/10 group-hover:border-electric-cyan/40 transition-colors duration-300"
+        >
+          <ChevronDown className="w-5 h-5 text-slate-white/70 group-hover:text-electric-cyan transition-all duration-300" />
+        </motion.div>
+      </motion.div>
     </div>
   );
 }

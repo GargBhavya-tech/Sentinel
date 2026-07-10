@@ -45,11 +45,13 @@ services:
     container_name: sentinel_frontend
     working_dir: /app
     restart: unless-stopped
+    stdin_open: true
+    tty: true
     depends_on:
       - backend
     environment:
       - VITE_API_URL=http://backend:8000
-      - DISABLE_HMR=false
+      - DISABLE_HMR=true
     ports:
       - "3000:3000"
     volumes:
