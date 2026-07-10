@@ -28,9 +28,23 @@ from sentinel.graph.slack_events import register_graph_listeners
 log = logging.getLogger(__name__)
 
 # ── App instance ──────────────────────────────────────────────────────────────
+# Bolt refuses to construct without a token. When Slack credentials are not
+# configured (e.g. the React-console / API-only path, CI, or a bare Docker
+# boot), fall back to inert placeholders and skip the startup auth.test so the
+# gateway still serves its REST/SSE endpoints. Real credentials take over
+# automatically whenever the env vars are set.
+_slack_token = os.environ.get("SLACK_BOT_TOKEN") or "xoxb-not-configured"
+_slack_secret = os.environ.get("SLACK_SIGNING_SECRET") or "not-configured"
+_slack_configured = bool(os.environ.get("SLACK_BOT_TOKEN"))
+if not _slack_configured:
+    log.warning(
+        "SLACK_BOT_TOKEN not set — Slack app running in inert mode "
+        "(REST/SSE endpoints work; live Slack events will not)."
+    )
+
 app = AsyncApp(
-    token=os.environ.get("SLACK_BOT_TOKEN", ""),
-    signing_secret=os.environ.get("SLACK_SIGNING_SECRET", ""),
+    token=_slack_token,
+    signing_secret=_slack_secret,
 )
 
 # Register the graph-ingestion listeners (ticket #3)

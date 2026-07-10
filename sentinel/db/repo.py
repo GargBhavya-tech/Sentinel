@@ -36,12 +36,38 @@ from .pool import get_db_pool
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
 
+class _ConnAdapter:
+    """Give a psycopg3 AsyncConnection the combined execute+fetch helpers this
+    module is written against.
+
+    psycopg3 puts `fetchone`/`fetchall` on the cursor, not the connection, and
+    they take no SQL. Every repo function here calls `conn.fetchone(sql, params)`
+    / `conn.fetchall(sql, params)`, so we wrap the raw connection and run
+    execute-then-fetch on a fresh cursor for each call. Commit/rollback is still
+    handled by the surrounding `pool.connection()` context manager.
+    """
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def fetchone(self, sql, params=None):
+        cur = await self._conn.execute(sql, params or ())
+        return await cur.fetchone()
+
+    async def fetchall(self, sql, params=None):
+        cur = await self._conn.execute(sql, params or ())
+        return await cur.fetchall()
+
+    async def execute(self, sql, params=None):
+        return await self._conn.execute(sql, params or ())
+
+
 @asynccontextmanager
 async def _conn():
     """Context manager: borrow a connection from the pool."""
     pool = await get_db_pool()
     async with pool.connection() as c:
-        yield c
+        yield _ConnAdapter(c)
 
 
 def _sha256(data: str) -> str:
@@ -432,10 +458,15 @@ async def get_audit_chain(
 
 
 class _noop:
-    """Wrap an already-open connection so 'async with' is a no-op."""
+    """Wrap an already-open connection so 'async with' is a no-op.
+
+    Yields the same execute+fetch adapter as `_conn()` so repo functions behave
+    identically whether they borrow from the pool or reuse a caller's
+    connection. If an adapter is passed in, it's used as-is.
+    """
 
     def __init__(self, conn):
-        self._conn = conn
+        self._conn = conn if isinstance(conn, _ConnAdapter) else _ConnAdapter(conn)
 
     async def __aenter__(self):
         return self._conn

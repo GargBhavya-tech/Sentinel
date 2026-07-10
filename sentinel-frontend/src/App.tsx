@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence, useScroll, useTransform } from 'motion/react';
 import { RefreshCw } from 'lucide-react';
 import Navbar from './components/Navbar';
@@ -9,12 +9,15 @@ import HowSentinelThinks from './components/HowSentinelThinks';
 import EasterEgg from './components/EasterEgg';
 import PlatformTransition from './components/PlatformTransition';
 import DashboardConsole from './components/DashboardConsole';
+import { useInvestigation } from './hooks/useInvestigation';
 import CustomCursor from './components/CustomCursor';
 
 type ViewState = 'landing' | 'transitioning' | 'dashboard';
 
 export default function App() {
   const [viewState, setViewState] = useState<ViewState>('landing');
+  // Single shared investigation instance — DashboardConsole requires it as a prop.
+  const investigation = useInvestigation();
   const { scrollY } = useScroll();
 
   // Create subtle parallax translation and fading for background layers
@@ -43,6 +46,20 @@ export default function App() {
   const handleEnterConsole = () => {
     setViewState('transitioning');
   };
+
+  // Complete the "syncing console" flash from ANY entry point. PlatformTransition
+  // (which normally fires onTransitionComplete) only exists inside the landing
+  // view and unmounts the instant we leave it, so without this effect the
+  // spinner would hang forever. Watching viewState also self-heals a state that
+  // was left in 'transitioning' (e.g. across a hot reload).
+  useEffect(() => {
+    if (viewState !== 'transitioning') return;
+    const t = setTimeout(() => {
+      setViewState('dashboard');
+      window.scrollTo(0, 0);
+    }, 1300);
+    return () => clearTimeout(t);
+  }, [viewState]);
 
   const handleTransitionComplete = () => {
     setViewState('dashboard');
@@ -165,7 +182,7 @@ export default function App() {
             transition={{ duration: 0.8 }}
             className="h-screen w-screen"
           >
-            <DashboardConsole onExit={() => setViewState('landing')} />
+            <DashboardConsole onExit={() => setViewState('landing')} investigation={investigation} />
           </motion.div>
         )}
       </AnimatePresence>

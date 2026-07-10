@@ -50,7 +50,7 @@ from sentinel.agents.adversarial_agent import run_self_play
 from sentinel.agents.honeypot_agent import run_honeypot
 from sentinel.claims import Claim
 from sentinel.rules.synthesizer import synthesize_rule
-from sentinel.rules.engine import match_rules
+from sentinel.rules.schema import Rule
 from sentinel.recall import recall as temporal_recall
 from sentinel.federated import check_federation
 from sentinel.eval.active_learning import register_case_score
@@ -178,26 +178,9 @@ async def investigate_streaming(
             payload={"channel": channel, "reporter": reporter, "text": event_text[:200]},
         )
 
-        # ── 2. Temporal recall (#21) ──────────────────────────────────────────
-        prior_cases = await temporal_recall(
-            case_id=case_id,
-            claims_dict={},
-            verdict="PENDING",
-            channel=channel,
-            rts_query=event_text,
-        )
-        recall_payload = []
-        if prior_cases:
-            recall_payload = [
-                {
-                    "case_id": p.case_id[:8],
-                    "similarity": round(p.similarity, 2),
-                    "verdict": p.verdict,
-                    "found_via": p.found_via,
-                }
-                for p in prior_cases[:3]
-            ]
-        await _emit(q, "temporal_recall", {"similar_cases": recall_payload})
+        # ── 2. Temporal recall runs AFTER agents (see step 4b) ────────────────
+        # An empty claims_dict embeds to the zero vector and can never match a
+        # prior case, so recall is deferred until the real claims exist.
 
         # ── 3. Announce agents ────────────────────────────────────────────────
         agent_list = [
@@ -294,6 +277,28 @@ async def investigate_streaming(
                         "claims": {},
                     })
 
+        # ── 4b. Temporal recall — with the real agent claims (#21) ────────────
+        claims_dict = {c.field: c.value for c in claims}
+        prior_cases = await temporal_recall(
+            case_id=case_id,
+            claims_dict=claims_dict,
+            verdict="PENDING",
+            channel=channel,
+            rts_query=event_text,
+        )
+        recall_payload = []
+        if prior_cases:
+            recall_payload = [
+                {
+                    "case_id": p.case_id[:8],
+                    "similarity": round(p.similarity, 2),
+                    "verdict": p.verdict,
+                    "found_via": p.found_via,
+                }
+                for p in prior_cases[:3]
+            ]
+        await _emit(q, "temporal_recall", {"similar_cases": recall_payload})
+
         # ── 5. Confidence-Calibrated Silence (#18) ────────────────────────────
         should_silence, silence_reason = _check_silence(claims)
         if should_silence:
@@ -309,7 +314,16 @@ async def investigate_streaming(
             return
 
         # ── 6. Contradiction engine (#15) ─────────────────────────────────────
-        verdict_obj = run_case(claims=claims)
+        # Load any analyst-promoted 'enforced' rules first; a match short-
+        # circuits the full engine (ticket #26 — "a later case trips the rule").
+        enforced_rules = []
+        try:
+            stored = await repo.list_rules(status="enforced")
+            enforced_rules = [Rule.from_dict(r.rule_json) for r in stored]
+        except Exception as e:
+            log.warning("Could not load enforced rules: %s", e)
+
+        verdict_obj = run_case(claims=claims, enforced_rules=enforced_rules)
         contradiction_axes = [c.axis for c in verdict_obj.contradictions]
 
         await _emit(q, "contradiction_result", {
