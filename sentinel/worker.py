@@ -47,6 +47,7 @@ from sentinel.agents import (
 from sentinel.claims import Claim
 from sentinel.rules.synthesizer import synthesize_rule
 from sentinel.recall import recall as temporal_recall
+from sentinel.slack_ui import verdict_action_blocks, create_case_canvas
 
 log = logging.getLogger(__name__)
 
@@ -75,7 +76,10 @@ def _verdict_emoji(verdict: str) -> str:
 
 
 def _build_verdict_card(
-    case_id: str, verdict_obj, red_team_defense: dict | None = None
+    case_id: str,
+    verdict_obj,
+    red_team_defense: dict | None = None,
+    rule_id: str | None = None,
 ) -> list[dict]:
     """Assemble the Phase 0/2 verdict Block Kit card.
 
@@ -147,6 +151,10 @@ def _build_verdict_card(
                 },
             }
         )
+
+    # Action buttons for the analyst (Quarantine #22 / Promote Rule #26).
+    if verdict_obj.verdict in ("FRAUD_LIKELY", "REVIEW"):
+        blocks.append(verdict_action_blocks(case_id, rule_id))
 
     blocks.append({"type": "divider"})
     return blocks
@@ -392,7 +400,12 @@ async def investigate(event: dict[str, Any]) -> None:
     )
 
     # ── 7. Post verdict card to Slack ─────────────────────────────────────────
-    blocks = _build_verdict_card(case.case_id, verdict_obj, red_team_defense)
+    blocks = _build_verdict_card(
+        case.case_id,
+        verdict_obj,
+        red_team_defense,
+        rule_id=synthesized_rule.rule_id if synthesized_rule else None,
+    )
     await app.client.chat_postMessage(
         channel=channel,
         thread_ts=ts,
@@ -400,6 +413,16 @@ async def investigate(event: dict[str, Any]) -> None:
         text=f"Sentinel verdict for Case #{short_id}: {verdict_obj.verdict}",
     )
     log.info("Case %s verdict card posted to Slack", case.case_id)
+
+    # Ticket #33 — per-case Slack Canvas (fails soft without canvases:write).
+    if verdict_obj.verdict in ("FRAUD_LIKELY", "REVIEW"):
+        canvas_id = await create_case_canvas(app.client, case.case_id, verdict_obj)
+        if canvas_id:
+            await app.client.chat_postMessage(
+                channel=channel,
+                thread_ts=ts,
+                text=f":page_facing_up: Case Canvas created for #{short_id}.",
+            )
 
     # Remove the downloaded evidence temp file now the agents are done.
     cleanup_evidence(evidence_path)

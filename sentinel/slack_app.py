@@ -83,3 +83,89 @@ async def on_mention(event: dict, say, ack) -> None:
         text="Sentinel is investigating…",
     )
     log.info("app_mention ACKed for channel=%s ts=%s", channel, ts)
+
+
+# ── App Home SOC dashboard (ticket #31) ────────────────────────────────────────
+
+
+@app.event("app_home_opened")
+async def on_home_opened(event: dict, client) -> None:
+    """Publish the SOC dashboard when a user opens the App Home tab."""
+    from sentinel.db import repo
+    from sentinel.slack_ui import home_view
+
+    user = event.get("user", "")
+    try:
+        cases = await repo.list_cases(limit=25)
+    except Exception as e:
+        log.warning("home tab: could not load cases: %s", e)
+        cases = []
+    try:
+        await client.views_publish(user_id=user, view=home_view(cases))
+    except Exception as e:
+        log.warning("home tab: views_publish failed: %s", e)
+
+
+# ── Verdict card action buttons ────────────────────────────────────────────────
+
+
+@app.action("promote_rule")
+async def on_promote_rule(ack, body, client) -> None:
+    """Promote a shadow rule to enforced from the Slack button (ticket #26)."""
+    await ack()
+    from sentinel.db import repo
+
+    rule_id = body["actions"][0]["value"]
+    channel = body["channel"]["id"]
+    ts = body["message"]["ts"]
+    try:
+        await repo.promote_rule(rule_id)
+        await repo.append_audit_event(
+            case_id="system",
+            event_type="rule_promoted",
+            payload={"rule_id": rule_id, "via": "slack", "by": body["user"]["id"]},
+        )
+        await client.chat_postMessage(
+            channel=channel,
+            thread_ts=ts,
+            text=f":white_check_mark: Rule `{rule_id[:8]}` promoted to *enforced*. "
+            "Future matching cases resolve instantly.",
+        )
+    except Exception as e:
+        log.warning("promote_rule action failed: %s", e)
+        await client.chat_postMessage(
+            channel=channel, thread_ts=ts, text=":warning: Could not promote rule."
+        )
+
+
+@app.action("quarantine_case")
+async def on_quarantine(ack, body, client) -> None:
+    """Quarantine the blast-radius nodes for a case (ticket #22)."""
+    await ack()
+    case_id = body["actions"][0]["value"]
+    user = body["user"]["id"]
+    channel = body["channel"]["id"]
+    ts = body["message"]["ts"]
+    try:
+        from sentinel.graph.blast_radius import blast_radius
+        from sentinel.graph.quarantine import quarantine
+
+        br = await blast_radius(user, depth=2)
+        node_ids = [n["id"] for n in getattr(br, "nodes", [])][:20] or [user]
+        quarantine(
+            case_id=case_id,
+            node_ids=node_ids,
+            reason="Analyst quarantine via Slack verdict card",
+            quarantined_by=user,
+        )
+        await client.chat_postMessage(
+            channel=channel,
+            thread_ts=ts,
+            text=f":lock: Quarantined {len(node_ids)} node(s) for case "
+            f"`{case_id[:8]}`. Audit entry written.",
+        )
+    except Exception as e:
+        log.warning("quarantine action failed: %s", e)
+        await client.chat_postMessage(
+            channel=channel, thread_ts=ts, text=":warning: Quarantine failed."
+        )
