@@ -260,6 +260,12 @@ async def append_audit_event(
         RETURNING entry_id, created_at
     """
     async with _conn() if conn is None else _noop(conn) as c:
+        # Serialize appends across concurrent investigations. Without this,
+        # two writers read the SAME prev_hash and fork the chain, which makes
+        # verify_audit_chain() report tampering (prev_hash mismatch). The
+        # transaction-scoped advisory lock is released automatically on commit
+        # (i.e. when the pool.connection() block exits).
+        await c.execute("SELECT pg_advisory_xact_lock(%s)", (911017,))
         prev_row = await c.fetchone(sql_prev)
         prev_hash = prev_row[0] if prev_row else ""
 

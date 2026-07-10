@@ -25,11 +25,13 @@ parallel via asyncio.gather(). The rest of the flow is unchanged.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any
 
 import asyncio
 from sentinel.db import repo
+from sentinel.ingest import download_evidence, cleanup_evidence, first_supported_file
 from sentinel.pipeline import run_case
 from sentinel.rules.schema import Rule
 from sentinel.slack_app import app
@@ -213,9 +215,22 @@ async def investigate(event: dict[str, Any]) -> None:
     stylo_text = event_text or "(no message text)"
     domain = _extract_domain(event_text)
 
+    # Download the first attached file so Vision analyzes the REAL document
+    # (not a placeholder). Fails soft to None → same behaviour as before.
+    evidence_path = None
+    picked = first_supported_file(event.get("files", []))
+    if picked:
+        evidence_path = await download_evidence(
+            picked.get("url_private", ""),
+            slack_token=os.environ.get("SLACK_BOT_TOKEN"),
+            filename=picked.get("name"),
+        )
+        if evidence_path:
+            log.info("Vision analyzing real evidence: %s", picked.get("name"))
+
     # Run all agents concurrently using asyncio.to_thread
     agent_tasks = [
-        asyncio.to_thread(vision_agent.analyze, case.case_id),
+        asyncio.to_thread(vision_agent.analyze, case.case_id, evidence_path),
         asyncio.to_thread(finance_agent.analyze, case.case_id),
         asyncio.to_thread(
             stylometric_agent.analyze, case.case_id, reporter, stylo_text
@@ -385,3 +400,6 @@ async def investigate(event: dict[str, Any]) -> None:
         text=f"Sentinel verdict for Case #{short_id}: {verdict_obj.verdict}",
     )
     log.info("Case %s verdict card posted to Slack", case.case_id)
+
+    # Remove the downloaded evidence temp file now the agents are done.
+    cleanup_evidence(evidence_path)

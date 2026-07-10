@@ -68,6 +68,26 @@ def match_rules(
 def _evaluate(rule: Rule, claims_dict: dict) -> bool:
     """Return True iff ALL non-null conditions in the rule are satisfied."""
 
+    # A rule with zero conditions would vacuously match EVERY case (AND over an
+    # empty set is True) and flag it as fraud. The synthesizer never creates
+    # such a rule, but one could arrive via the MCP synthesize_rule tool or a
+    # bad DB row — so refuse to fire on it here.
+    if all(
+        c is None
+        for c in (
+            rule.ratio_threshold,
+            rule.tone_anomaly_threshold,
+            rule.voice_mismatch_threshold,
+            rule.domain_age_days_max,
+            rule.injection_present,
+            rule.policy_violation,
+        )
+    ):
+        log.warning(
+            "Rule %s has no conditions — refusing to fire", rule.rule_id[:8]
+        )
+        return False
+
     # ── ratio check ────────────────────────────────────────────────────────
     if rule.ratio_threshold is not None:
         visual = claims_dict.get("visual_total")

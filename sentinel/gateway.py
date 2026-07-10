@@ -36,7 +36,15 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -68,6 +76,13 @@ from sentinel.sse_worker import (  # noqa: E402
 async def lifespan(api: FastAPI):
     """Open DB pool on startup; close on shutdown."""
     log.info("Sentinel gateway starting — opening DB pool…")
+    _pepper = os.environ.get("PII_HMAC_PEPPER", "")
+    if _pepper in ("", "change-me-to-a-strong-random-value"):
+        log.warning(
+            "PII_HMAC_PEPPER is unset/default — PII pseudonymization is NOT "
+            "secure. Set a strong random value (python -c \"import secrets; "
+            "print(secrets.token_hex(32))\")."
+        )
     await get_db_pool()
     log.info("DB pool ready.")
     yield
@@ -83,16 +98,38 @@ api = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow the Vite dev server and any origin during hackathon judging
+# CORS — default to the Vite dev servers; override via CORS_ORIGINS (comma-sep).
+# Note: a wildcard origin with allow_credentials=True is rejected by browsers,
+# so we enumerate origins explicitly. The Vite proxy makes calls same-origin in
+# dev, so this rarely even engages locally.
+_cors_origins = [
+    o.strip()
+    for o in os.environ.get(
+        "CORS_ORIGINS", "http://localhost:3000,http://localhost:5173"
+    ).split(",")
+    if o.strip()
+]
 api.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # lock down to specific origins in production
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 handler = AsyncSlackRequestHandler(bolt_app)
+
+
+def require_console_key(x_sentinel_key: str = Header(default="")) -> None:
+    """Optional shared-secret guard for state-changing endpoints.
+
+    Enforced ONLY when the CONSOLE_KEY env var is set, so the local demo works
+    with zero config, but a deployed/judge-facing instance can lock down writes
+    (e.g. rule promotion) by setting CONSOLE_KEY and sending X-Sentinel-Key.
+    """
+    required = os.environ.get("CONSOLE_KEY")
+    if required and x_sentinel_key != required:
+        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 # ── Request models ────────────────────────────────────────────────────────────
@@ -177,6 +214,7 @@ async def start_investigation(
         amount_at_risk=amount,
         channel=body.channel,
         reporter=body.reporter,
+        file_url=body.file_url,
     )
 
     return {
@@ -313,7 +351,7 @@ async def list_rules() -> dict:
 
 
 @api.post("/api/rules/{rule_id}/promote")
-async def promote_rule(rule_id: str) -> dict:
+async def promote_rule(rule_id: str, _: None = Depends(require_console_key)) -> dict:
     """Promote a shadow rule to enforced status."""
     try:
         await repo.promote_rule(rule_id)

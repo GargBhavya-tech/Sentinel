@@ -49,6 +49,7 @@ from sentinel.agents.red_team_agent import generate_defense
 from sentinel.agents.adversarial_agent import run_self_play
 from sentinel.agents.honeypot_agent import run_honeypot
 from sentinel.claims import Claim
+from sentinel.ingest import download_evidence, cleanup_evidence
 from sentinel.rules.synthesizer import synthesize_rule
 from sentinel.rules.schema import Rule
 from sentinel.recall import recall as temporal_recall
@@ -141,6 +142,7 @@ async def investigate_streaming(
     amount_at_risk: float = 0.0,
     channel: str = "C_DEMO",
     reporter: str = "U_DEMO",
+    file_url: str | None = None,
 ) -> None:
     """Run the full Sentinel investigation, emitting SSE events into q.
 
@@ -159,6 +161,7 @@ async def investigate_streaming(
     reporter : str
         Slack user ID who triggered the investigation.
     """
+    evidence_path: str | None = None  # temp file, cleaned up in finally
     try:
         short_id = case_id[:8]
         log.info("SSE worker started for case %s", short_id)
@@ -196,8 +199,14 @@ async def investigate_streaming(
         await _emit(q, "agents_started", {"agents": agent_list})
 
         # ── 4. Run all agents concurrently ────────────────────────────────────
+        # Download the supplied evidence file so Vision analyzes the REAL
+        # document. Fails soft to None (Vision then behaves as before).
+        evidence_path = await download_evidence(file_url) if file_url else None
+        if evidence_path:
+            await _emit(q, "evidence_ingested", {"analyzing_real_file": True})
+
         agent_tasks = {
-            "vision": asyncio.to_thread(vision_agent.analyze, case_id),
+            "vision": asyncio.to_thread(vision_agent.analyze, case_id, evidence_path),
             "finance": asyncio.to_thread(finance_agent.analyze, case_id),
             "stylometric": asyncio.to_thread(
                 stylometric_agent.analyze, case_id, reporter, event_text
@@ -493,6 +502,7 @@ async def investigate_streaming(
         await _emit(q, "error", {"message": str(e), "case_id": case_id})
 
     finally:
+        cleanup_evidence(evidence_path)
         await _emit(q, "stream_end", {"case_id": case_id})
         # Give the consumer a moment to drain, then cleanup
         await asyncio.sleep(2)
