@@ -52,6 +52,13 @@ from sentinel.claims import Claim
 from sentinel.ingest import download_evidence, cleanup_evidence
 from sentinel.rules.synthesizer import synthesize_rule
 from sentinel.rules.schema import Rule
+import re as _re
+
+# First bare domain in free text — lets threat-intel scan the REAL domain in the
+# report instead of the old hardcoded "example.com" placeholder.
+_DOMAIN_RE = _re.compile(
+    r"\b([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(?:[a-z]{2,}))\b", _re.IGNORECASE
+)
 from sentinel.recall import recall as temporal_recall
 from sentinel.federated import check_federation
 from sentinel.eval.active_learning import register_case_score
@@ -205,6 +212,10 @@ async def investigate_streaming(
         if evidence_path:
             await _emit(q, "evidence_ingested", {"analyzing_real_file": True})
 
+        # Scan the real domain from the report text (fixes the hardcoded stub).
+        _dm = _DOMAIN_RE.search(event_text or "")
+        domain_to_scan = _dm.group(1) if _dm else "example.com"
+
         agent_tasks = {
             "vision": asyncio.to_thread(vision_agent.analyze, case_id, evidence_path),
             "finance": asyncio.to_thread(finance_agent.analyze, case_id),
@@ -213,7 +224,7 @@ async def investigate_streaming(
             ),
             "voice": asyncio.to_thread(voice_agent.analyze, case_id, reporter),
             "threat_intel": asyncio.to_thread(
-                threat_intel_agent.analyze, case_id, "example.com"
+                threat_intel_agent.analyze, case_id, domain_to_scan
             ),
             "nlp": asyncio.to_thread(nlp_agent.analyze, case_id, event_text),
             "policy": asyncio.to_thread(
@@ -231,16 +242,20 @@ async def investigate_streaming(
         results_map: dict[str, Any] = {}
         t_start = time.perf_counter()
 
-        pending = {name: asyncio.ensure_future(coro) for name, coro in agent_tasks.items()}
+        # Map each future to its agent name for O(1) lookup on completion
+        # (avoids an O(n) identity scan per finished future, and the
+        # StopIteration risk if the scan ever fails to match).
+        future_to_name = {
+            asyncio.ensure_future(coro): name for name, coro in agent_tasks.items()
+        }
+        pending = set(future_to_name)
 
         while pending:
-            done, _ = await asyncio.wait(
-                pending.values(), return_when=asyncio.FIRST_COMPLETED
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
             )
             for fut in done:
-                # Find which agent finished
-                agent_name = next(n for n, f in pending.items() if f is fut)
-                pending.pop(agent_name)
+                agent_name = future_to_name[fut]
                 elapsed = round((time.perf_counter() - t_start) * 1000, 1)
 
                 try:

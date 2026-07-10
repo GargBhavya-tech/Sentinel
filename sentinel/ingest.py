@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +65,18 @@ async def download_evidence(
     """
     if not url:
         return None
+
+    # Local path (e.g. a browser-uploaded evidence file) — copy to a temp file
+    # so the caller's cleanup deletes the copy, not the stored upload.
+    if os.path.isfile(url):
+        try:
+            fd, path = tempfile.mkstemp(suffix=Path(url).suffix, prefix="sentinel_ev_")
+            os.close(fd)
+            shutil.copyfile(url, path)
+            return path
+        except OSError as e:
+            log.warning("ingest: could not copy local evidence %s: %s", url, e)
+            return None
 
     try:
         import httpx  # type: ignore
@@ -118,6 +132,31 @@ def cleanup_evidence(path: Optional[str]) -> None:
         os.remove(path)
     except OSError:
         pass
+
+
+# ── Browser uploads (POST /api/upload) ─────────────────────────────────────────
+
+_UPLOAD_DIR = Path(tempfile.gettempdir()) / "sentinel_uploads"
+_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+_uploads: dict[str, str] = {}  # evidence_id -> stored path (same process)
+
+
+def save_upload(data: bytes, filename: str) -> str:
+    """Persist an uploaded file and return an opaque evidence_id."""
+    ext = Path(filename or "").suffix.lower()
+    if ext not in _SUPPORTED:
+        ext = ".bin"
+    evidence_id = uuid4().hex
+    path = _UPLOAD_DIR / f"{evidence_id}{ext}"
+    path.write_bytes(data[:_MAX_BYTES])
+    _uploads[evidence_id] = str(path)
+    log.info("ingest: stored upload %r (%d bytes) -> %s", filename, len(data), path)
+    return evidence_id
+
+
+def resolve_upload(evidence_id: str) -> Optional[str]:
+    """Map an evidence_id back to its stored path (or None if unknown)."""
+    return _uploads.get(evidence_id) if evidence_id else None
 
 
 def first_supported_file(files: list[dict]) -> Optional[dict]:

@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   db:
     image: postgres:16-alpine
@@ -30,7 +28,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # Load secrets (SLACK_*, PII_HMAC_PEPPER, CONSOLE_KEY, VIRUSTOTAL_API_KEY)
+    # from .env when present. Optional so the zero-key demo still boots without it.
+    env_file:
+      - path: .env
+        required: false
     environment:
+      # Explicit values here OVERRIDE .env — DATABASE_URL must point at the
+      # `db` service inside the compose network, not localhost.
       DATABASE_URL: postgresql://sentinel:sentinel@db:5432/sentinel
       HOST: 0.0.0.0
       PORT: "8000"

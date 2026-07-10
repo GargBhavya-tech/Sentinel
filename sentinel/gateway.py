@@ -40,10 +40,12 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     FastAPI,
+    File,
     Header,
     HTTPException,
     Request,
     Response,
+    UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -138,6 +140,7 @@ class InvestigateRequest(BaseModel):
     description: str = "suspicious invoice"
     amount_at_risk: float = 0.0
     file_url: str | None = None
+    evidence_id: str | None = None    # from POST /api/upload (browser drag-drop)
     channel: str = "C_DEMO"
     reporter: str = "U_DEMO"
     demo_case: bool = False           # load the flagship demo case signals
@@ -173,16 +176,56 @@ async def slack_events(req: Request, background_tasks: BackgroundTasks) -> Respo
 
 # ── React Console: Start investigation ────────────────────────────────────────
 
+@api.post("/api/upload")
+async def upload_evidence(file: UploadFile = File(...)) -> dict:
+    """Accept a browser file upload and return an evidence_id.
+
+    The client passes that id back to /api/investigate; the worker resolves it
+    to the stored file so the Vision agent analyzes the real document.
+    """
+    from sentinel.ingest import save_upload
+
+    data = await file.read()
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="file too large (max 15 MB)")
+    if not data:
+        raise HTTPException(status_code=400, detail="empty file")
+    evidence_id = save_upload(data, file.filename or "upload.bin")
+    return {"evidence_id": evidence_id, "filename": file.filename}
+
+
+# ── Simple in-memory rate limiter for /api/investigate ─────────────────────────
+import time as _time
+from collections import defaultdict, deque
+
+_RATE_WINDOW_S = 60.0
+_RATE_MAX = int(os.environ.get("INVESTIGATE_RATE_MAX", "30"))  # per IP per minute
+_rate_hits: dict[str, deque] = defaultdict(deque)
+
+
+def _rate_limit(request: Request) -> None:
+    ip = request.client.host if request.client else "unknown"
+    now = _time.monotonic()
+    dq = _rate_hits[ip]
+    while dq and now - dq[0] > _RATE_WINDOW_S:
+        dq.popleft()
+    if len(dq) >= _RATE_MAX:
+        raise HTTPException(status_code=429, detail="rate limit exceeded — slow down")
+    dq.append(now)
+
+
 @api.post("/api/investigate")
 async def start_investigation(
     body: InvestigateRequest,
     background_tasks: BackgroundTasks,
+    request: Request,
 ) -> dict:
     """Start a Sentinel investigation from the React console.
 
     Returns the case_id immediately. The client then subscribes to
     GET /api/investigate/{case_id}/stream to receive SSE events.
     """
+    _rate_limit(request)
     # Create DB case
     case = await repo.create_case(
         slack_channel=body.channel,
@@ -205,6 +248,14 @@ async def start_investigation(
         )
         amount = 1_450_000.0
 
+    # Resolve an uploaded file (evidence_id) to its stored path; fall back to a
+    # directly-supplied file_url. The worker's download_evidence handles both.
+    file_ref = body.file_url
+    if body.evidence_id:
+        from sentinel.ingest import resolve_upload
+
+        file_ref = resolve_upload(body.evidence_id) or body.file_url
+
     # Launch streaming worker as background task
     background_tasks.add_task(
         investigate_streaming,
@@ -214,7 +265,7 @@ async def start_investigation(
         amount_at_risk=amount,
         channel=body.channel,
         reporter=body.reporter,
-        file_url=body.file_url,
+        file_url=file_ref,
     )
 
     return {

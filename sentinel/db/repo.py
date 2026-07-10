@@ -265,7 +265,16 @@ async def append_audit_event(
         # verify_audit_chain() report tampering (prev_hash mismatch). The
         # transaction-scoped advisory lock is released automatically on commit
         # (i.e. when the pool.connection() block exits).
-        await c.execute("SELECT pg_advisory_xact_lock(%s)", (911017,))
+        #
+        # The lock MUST be global (this fixed key), NOT per-case: the chain is a
+        # single global sequence (sql_prev reads the last entry across ALL
+        # cases, and verify_audit_chain walks every entry in entry_id order). A
+        # per-case lock would let two different cases read the same global tip
+        # concurrently and fork the chain — reintroducing the exact bug this
+        # prevents. Appends are sub-millisecond, so the convoy cost is negligible
+        # next to the tamper-evidence guarantee.
+        _AUDIT_CHAIN_LOCK_KEY = 911017
+        await c.execute("SELECT pg_advisory_xact_lock(%s)", (_AUDIT_CHAIN_LOCK_KEY,))
         prev_row = await c.fetchone(sql_prev)
         prev_hash = prev_row[0] if prev_row else ""
 
