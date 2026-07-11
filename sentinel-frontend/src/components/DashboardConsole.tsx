@@ -22,6 +22,59 @@ export default function DashboardConsole({ onExit }: DashboardConsoleProps) {
   const [newNote, setNewNote] = useState('');
   const [currentTime, setCurrentTime] = useState('10:24:02 UTC');
 
+  const [uiMode, setUiMode] = useState<'tactical' | 'enterprise'>(
+    (localStorage.getItem('sentinel_ui_mode') as any) || 'enterprise'
+  );
+  const [selectedClient, setSelectedClient] = useState('RPG Inc. (Active Workspace)');
+  const clientsList = ['RPG Inc. (Active Workspace)', 'Acme Corp (Staging)', 'Stark Enterprises (Pilot)'];
+
+  const toggleUiMode = () => {
+    const next = uiMode === 'tactical' ? 'enterprise' : 'tactical';
+    setUiMode(next);
+    localStorage.setItem('sentinel_ui_mode', next);
+  };
+
+  const translateEventTitle = (title: string) => {
+    if (uiMode === 'tactical') return title;
+    const t = title.toUpperCase();
+    if (t.includes('CASE_CREATED') || t.includes('CASE CREATED')) return 'Case Initiated';
+    if (t.includes('RULE_SYNTHESIZED') || t.includes('RULE SYNTHESIZED')) return 'Security Rule Created';
+    if (t.includes('VERDICT')) return 'Risk Verdict';
+    if (t.includes('QUARANTINE')) return 'Active Containment';
+    if (t.includes('MANUAL_ANNOTATION') || t.includes('MANUAL ANNOTATION')) return 'Investigator Comment';
+    return title;
+  };
+
+  const translateEventDescription = (description: string, title: string) => {
+    if (uiMode === 'tactical') return description;
+    try {
+      if (description.startsWith('{') && description.endsWith('}')) {
+        const payload = JSON.parse(description);
+        if (title.includes('CASE_CREATED') || title.includes('CASE CREATED')) {
+          return `New case created in Slack channel #${payload.slack_channel || 'unknown'} by user ${payload.reporter || 'unknown'}.`;
+        }
+        if (title.includes('RULE_SYNTHESIZED') || title.includes('RULE SYNTHESIZED')) {
+          return `Auto-synthesized shadow rule: "${payload.description || 'rule'}" (ID: ${payload.rule_id?.slice(0, 8)}).`;
+        }
+        if (title.includes('VERDICT')) {
+          return `System verdict determined: ${payload.verdict} with risk probability of ${(payload.risk * 100).toFixed(0)}%.`;
+        }
+        if (title.includes('QUARANTINE')) {
+          return `Threat isolated: ${payload.description || 'Quarantined connected nodes'} (${(payload.nodes || []).join(', ')}).`;
+        }
+        if (title.includes('MANUAL_ANNOTATION') || title.includes('MANUAL ANNOTATION')) {
+          return `Investigator Note: "${payload.description}" — added by ${payload.agent || 'system'}.`;
+        }
+        return Object.entries(payload)
+          .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${JSON.stringify(v)}`)
+          .join(', ');
+      }
+    } catch (err) {
+      // Fallback
+    }
+    return description;
+  };
+
   const [liveCases, setLiveCases] = useState<any[]>([]);
   const [liveTimelineEvents, setLiveTimelineEvents] = useState<TimelineEvent[]>([]);
 
@@ -188,19 +241,52 @@ export default function DashboardConsole({ onExit }: DashboardConsoleProps) {
             className="flex items-center gap-2 font-mono text-[10px] tracking-widest text-slate-white/40 hover:text-electric-cyan transition-colors duration-200 uppercase cursor-pointer focus:outline-none"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
-            [ EXIT CONSOLE ]
+            [ EXIT ]
           </button>
           
           <div className="h-6 w-[1px] bg-slate-white/10 hidden md:block" />
+
+          {/* Toggle view mode */}
+          <button 
+            onClick={toggleUiMode}
+            className="flex items-center gap-1.5 font-mono text-[9px] tracking-widest text-electric-cyan border border-electric-cyan/20 bg-electric-cyan/5 px-2.5 py-1 rounded-xs hover:bg-electric-cyan/10 transition-colors uppercase cursor-pointer"
+          >
+            {uiMode === 'tactical' ? 'Enterprise view' : 'Tactical HUD view'}
+          </button>
+
+          <div className="h-6 w-[1px] bg-slate-white/10 hidden md:block" />
           
-          <div>
-            <span className="font-display font-black text-sm tracking-[0.25em] text-slate-white uppercase block">
-              SENTINEL COGNITIVE CONSOLE
-            </span>
-            <span className="font-mono text-[9px] tracking-wider text-slate-white/30 block mt-0.5">
-              FORENSIC AUDITING WORKSPACE // ACTIVE_PORT_3000
-            </span>
-          </div>
+          {uiMode === 'enterprise' ? (
+            <div className="relative group">
+              <button className="flex items-center gap-1.5 font-mono text-[9px] tracking-widest text-slate-white/60 bg-slate-white/5 border border-slate-white/10 px-3 py-1.5 rounded-xs hover:border-slate-white/20 transition-all cursor-pointer">
+                {selectedClient}
+                <ChevronRight className="w-3 h-3 rotate-90" />
+              </button>
+              <div className="absolute left-0 mt-1 hidden group-hover:block bg-obsidian border border-slate-white/10 rounded-xs shadow-xl z-50 w-56 py-1 overflow-hidden">
+                {clientsList.map(c => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setSelectedClient(c)}
+                    className={`w-full text-left font-mono text-[9px] tracking-wider px-4 py-2 hover:bg-slate-white/5 transition-colors block ${
+                      selectedClient === c ? 'text-electric-cyan font-bold' : 'text-slate-white/50'
+                    }`}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div>
+              <span className="font-display font-black text-sm tracking-[0.25em] text-slate-white uppercase block">
+                SENTINEL COGNITIVE CONSOLE
+              </span>
+              <span className="font-mono text-[9px] tracking-wider text-slate-white/30 block mt-0.5">
+                FORENSIC AUDITING WORKSPACE // ACTIVE_PORT_3000
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Global Realtime System Metrics Grid */}
@@ -333,6 +419,65 @@ export default function DashboardConsole({ onExit }: DashboardConsoleProps) {
           {/* Details / Drills Container */}
           <div className="flex-1 overflow-y-auto no-scrollbar p-6 space-y-6">
             
+            {/* Mitigation Control Hub for Enterprise Users */}
+            {uiMode === 'enterprise' && selectedCase.id && (
+              <div className="glass-panel p-5 rounded-xs border border-slate-white/10 bg-slate-white/[0.01]">
+                <h4 className="font-mono text-[9px] text-slate-white/40 uppercase tracking-wider mb-3">[ CLIENT RESOLUTION ACTIONS ]</h4>
+                <div className="flex flex-wrap sm:flex-nowrap gap-3">
+                  <button
+                    onClick={async () => {
+                      try {
+                        await addAnnotation(selectedCase.id, JSON.stringify({
+                          description: "Transaction approved and cleared manually by risk analyst.",
+                          agent: "Human_Risk_Officer"
+                        }));
+                      } catch (err) {
+                        console.error(err);
+                      }
+                    }}
+                    className="flex-1 border border-cyber-emerald/30 bg-cyber-emerald/5 hover:bg-cyber-emerald/15 text-cyber-emerald font-mono text-[9px] font-bold uppercase py-2 px-3 rounded-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    APPROVE CASE
+                  </button>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await addAnnotation(selectedCase.id, JSON.stringify({
+                          description: "Sender geolocations quarantined and network nodes isolated.",
+                          nodes: ["VPN_SG_IP", "CEO_VOICE_8"],
+                          reason: "Triggered active containment from enterprise console UI.",
+                          agent: "Human_Risk_Officer"
+                        }));
+                      } catch (err) {
+                        console.error(err);
+                      }
+                    }}
+                    className="flex-1 border border-evidence-crimson/30 bg-evidence-crimson/5 hover:bg-evidence-crimson/15 text-evidence-crimson font-mono text-[9px] font-bold uppercase py-2 px-3 rounded-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <ShieldAlert className="w-3.5 h-3.5" />
+                    QUARANTINE
+                  </button>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await addAnnotation(selectedCase.id, JSON.stringify({
+                          description: "Synthesized policy rule enforced permanently in production firewall.",
+                          agent: "Human_Risk_Officer"
+                        }));
+                      } catch (err) {
+                        console.error(err);
+                      }
+                    }}
+                    className="flex-1 border border-amber-warning/30 bg-amber-warning/5 hover:bg-amber-warning/15 text-amber-warning font-mono text-[9px] font-bold uppercase py-2 px-3 rounded-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    ENFORCE RULE
+                  </button>
+                </div>
+              </div>
+            )}
+            
             {/* Deep Audit text block */}
             <div className="glass-panel p-5 rounded-xs relative">
               <div className="absolute top-2 right-3 font-mono text-[8px] text-slate-white/20 uppercase tracking-widest">[ COGNITIVE DISCOVERIES ]</div>
@@ -363,16 +508,16 @@ export default function DashboardConsole({ onExit }: DashboardConsoleProps) {
 
                     <div className="flex-1">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-1.5">
-                        <span className="font-display font-medium text-xs tracking-wider text-slate-white uppercase">
-                          {evt.title}
+                        <span className={uiMode === 'enterprise' ? 'font-sans font-bold text-sm text-slate-white' : 'font-display font-medium text-xs tracking-wider text-slate-white uppercase'}>
+                          {translateEventTitle(evt.title)}
                         </span>
                         <div className="flex items-center gap-2 font-mono text-[9px] text-slate-white/30">
                           <span className="bg-slate-white/5 px-1.5 py-0.5 rounded-xs">{evt.agentName}</span>
                           <span>{evt.timestamp}</span>
                         </div>
                       </div>
-                      <p className="font-mono text-[10px] text-slate-white/55 leading-relaxed tracking-wide">
-                        {evt.description}
+                      <p className={uiMode === 'enterprise' ? 'font-sans text-xs text-slate-white/80 leading-relaxed' : 'font-mono text-[10px] text-slate-white/55 leading-relaxed tracking-wide'}>
+                        {translateEventDescription(evt.description, evt.title)}
                       </p>
                     </div>
                   </div>
