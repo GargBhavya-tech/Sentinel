@@ -191,3 +191,15 @@ export async function verifyAudit(): Promise<{ intact: boolean; message: string 
   if (!res.ok) return { intact: false, message: 'Verification endpoint unavailable' };
   return res.json();
 }
+
+// ── Annotate ──────────────────────────────────────────────────────────────────
+
+export async function addAnnotation(caseId: string, description: string): Promise<unknown> {
+  const res = await fetch(`${BASE}/cases/${caseId}/annotate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ description }),
+  });
+  if (!res.ok) throw new Error('Failed to add annotation');
+  return res.json();
+}

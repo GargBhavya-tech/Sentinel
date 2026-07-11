@@ -6,7 +6,7 @@ import {
   TrendingUp, RefreshCw, ChevronRight, Terminal, Network, ArrowLeft, Send
 } from 'lucide-react';
 import { EvidenceItem, TimelineEvent, AgentStatus } from '../types';
-import { listCases, getCaseAudit } from '../api/sentinel';
+import { listCases, getCaseAudit, addAnnotation } from '../api/sentinel';
 
 interface DashboardConsoleProps {
   onExit: () => void;
@@ -18,12 +18,25 @@ interface DashboardConsoleProps {
 
 export default function DashboardConsole({ onExit }: DashboardConsoleProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCaseId, setSelectedCaseId] = useState('SENT-109A');
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [newNote, setNewNote] = useState('');
   const [currentTime, setCurrentTime] = useState('10:24:02 UTC');
 
   const [liveCases, setLiveCases] = useState<any[]>([]);
   const [liveTimelineEvents, setLiveTimelineEvents] = useState<TimelineEvent[]>([]);
+
+  // Combined list of live database cases
+  const combinedEvidenceItems: EvidenceItem[] = liveCases.map(c => ({
+    id: c.case_id,
+    type: 'thread' as const,
+    title: `Slack Case #${c.short_id}`,
+    source: `Slack Event`,
+    status: (c.verdict === 'FRAUD_LIKELY' ? 'threat' : c.verdict === 'REVIEW' ? 'suspicious' : c.verdict === 'CLEAR' ? 'verified' : 'unverified') as any,
+    timestamp: c.created_at,
+    description: `Slack triggered investigation. Current status: ${c.status}`,
+    content: `Status: ${c.status}\nVerdict: ${c.verdict || 'PENDING'}\nRisk Score: ${c.risk_score !== null ? (c.risk_score * 100).toFixed(1) + '%' : 'N/A'}\nAmount at Risk: $${c.amount_at_risk.toLocaleString()}`,
+    confidence: c.risk_score !== null ? Math.round(c.risk_score * 100) : 0,
+  }));
 
   // Poll live cases from API
   useEffect(() => {
@@ -48,7 +61,7 @@ export default function DashboardConsole({ onExit }: DashboardConsoleProps) {
 
   // Poll timeline events for selected live case
   useEffect(() => {
-    if (!selectedCaseId || selectedCaseId.startsWith('SENT-')) {
+    if (!selectedCaseId) {
       setLiveTimelineEvents([]);
       return;
     }
@@ -140,134 +153,39 @@ export default function DashboardConsole({ onExit }: DashboardConsoleProps) {
     return () => clearInterval(interval);
   }, []);
 
-  // Pre-loaded evidence queue cases
-  const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([
-    {
-      id: 'SENT-109A',
-      type: 'voice',
-      title: 'Cloned CEO Voice Print',
-      source: 'call_recording_a8.wav',
-      status: 'threat',
-      timestamp: '2026-07-09T10:14:02Z',
-      description: 'Audio print of voice instructing wire disbursement matches AI voice cloner patterns.',
-      content: 'CEO voice replication detected. Mismatch in breath-to-speech ratio (98.2% synthetic rating). Frequency overlay matches PrimeCloner-v4 neural model.',
-      confidence: 98,
-    },
-    {
-      id: 'SENT-109B',
-      type: 'spreadsheet',
-      title: 'Aether Ledger Routing Discrepancy',
-      source: 'invoice_9108A_US.pdf',
-      status: 'suspicious',
-      timestamp: '2026-07-09T10:16:15Z',
-      description: 'Disbursement routing number RT_912000031 differs from primary payroll ledger.',
-      content: 'The provided transit routing matches external shell entity registered in offshore jurisdiction. Discrepancy marked against primary supplier account records.',
-      confidence: 64,
-    },
-    {
-      id: 'SENT-109C',
-      type: 'document',
-      title: 'Singapore IP Tunnel Activity',
-      source: 'network_stream_node.log',
-      status: 'threat',
-      timestamp: '2026-07-09T10:18:40Z',
-      description: 'VPN gateway node route matches high-risk fraud center fingerprints.',
-      content: 'Caller geolocation traced to Singapore VPN node. Concurrent login from CEO primary email client registered in San Francisco, CA. Simultaneous presence physically impossible.',
-      confidence: 91,
-    },
-    {
-      id: 'SENT-109D',
-      type: 'thread',
-      title: 'DKIM Verified Inbox Protocol',
-      source: 'inbox_gateway_th.eml',
-      status: 'verified',
-      timestamp: '2026-07-09T10:20:10Z',
-      description: 'Encrypted email thread confirming correct ledger routing ending in 20038.',
-      content: 'Cryptographic handshake and DKIM signatures verified intact. Content matches trusted parameters. Source address validated.',
-      confidence: 99,
-    },
-    {
-      id: 'SENT-110A',
-      type: 'payment',
-      title: 'Pending Payroll Transfer Hold',
-      source: 'transfer_instruction_A9.json',
-      status: 'unverified',
-      timestamp: '2026-07-09T10:22:15Z',
-      description: 'Drafted transfer of $1,450,000.00 suspended awaiting final agent decision.',
-      content: 'Value matches standard monthly payroll threshold. Transaction queued on hold pending resolving current critical threats.',
-      confidence: 15,
+  // Set default selected case when cases load
+  useEffect(() => {
+    if (!selectedCaseId && combinedEvidenceItems.length > 0) {
+      setSelectedCaseId(combinedEvidenceItems[0].id);
     }
-  ]);
-
-  // Forensic chronological logs for the selected case
-  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([
-    { id: 'e1', timestamp: '10:14:02 UTC', title: 'File Ingestion Sync', type: 'info', description: 'Raw call_recording_a8.wav print ingested.', sourceId: 'SENT-109A', agentName: 'Document_Structure_Agent' },
-    { id: 'e2', timestamp: '10:14:08 UTC', title: 'Voiceprint Overlay Analysis', type: 'warning', description: 'Speech_Synapse_Agent completed spectrograph mapping.', sourceId: 'SENT-109A', agentName: 'Speech_Synapse_Agent' },
-    { id: 'e3', timestamp: '10:14:15 UTC', title: 'Synthetic Signature Flags', type: 'threat', description: '98% synthetic match with prime-cloner voice models.', sourceId: 'SENT-109A', agentName: 'Speech_Synapse_Agent' },
-    { id: 'e4', timestamp: '10:14:22 UTC', title: 'System Preventative Hold', type: 'threat', description: 'Transaction routing held. Cross-examination queue compiled.', sourceId: 'SENT-109A', agentName: 'Ledger_Integrity_Agent' },
-
-    { id: 'e5', timestamp: '10:16:15 UTC', title: 'Invoice Parsing Completed', type: 'info', description: 'Extracted routing data from invoice_9108A_US.pdf.', sourceId: 'SENT-109B', agentName: 'Document_Structure_Agent' },
-    { id: 'e6', timestamp: '10:16:20 UTC', title: 'Transit Code Check', type: 'warning', description: 'Discrepancy identified between transit codes RT_912000031 and secure ledger template.', sourceId: 'SENT-109B', agentName: 'Ledger_Integrity_Agent' },
-
-    { id: 'e7', timestamp: '10:18:40 UTC', title: 'IP Geo-Mapping', type: 'info', description: 'Network stream traced to SG gateway node.', sourceId: 'SENT-109C', agentName: 'Geo_Tunnel_Agent' },
-    { id: 'e8', timestamp: '10:19:02 UTC', title: 'Concurrency Contrast Fail', type: 'threat', description: 'CEO CA mail log-in overlaps call origin coordinates.', sourceId: 'SENT-109C', agentName: 'Geo_Tunnel_Agent' },
-
-    { id: 'e9', timestamp: '10:20:10 UTC', title: 'Cryptographic Audit', type: 'success', description: 'DKIM and secure signatures parsed. Integrity fully intact.', sourceId: 'SENT-109D', agentName: 'Document_Structure_Agent' },
-
-    { id: 'e10', timestamp: '10:22:15 UTC', title: 'Transaction Queued', type: 'info', description: 'Draft transfer payload placed on temporary hold pending threat review.', sourceId: 'SENT-110A', agentName: 'Ledger_Integrity_Agent' },
-  ]);
+  }, [combinedEvidenceItems, selectedCaseId]);
 
   // Active highlighted relationship map nodes for the current selected case
   const getGraphHighlightType = (nodeId: string) => {
-    if (selectedCaseId === 'SENT-109A') {
-      if (nodeId === 'voice' || nodeId === 'central') return 'threat';
+    if (!selectedCaseId) return 'default';
+    if (selectedCase.status === 'threat') {
+      if (nodeId === 'voice' || nodeId === 'central' || nodeId === 'vpn') return 'threat';
     }
-    if (selectedCaseId === 'SENT-109B') {
-      if (nodeId === 'ledger' || nodeId === 'central' || nodeId === 'invoice') return 'suspicious';
+    if (selectedCase.status === 'suspicious') {
+      if (nodeId === 'invoice' || nodeId === 'central') return 'suspicious';
     }
-    if (selectedCaseId === 'SENT-109C') {
-      if (nodeId === 'vpn' || nodeId === 'central' || nodeId === 'ceo_email') return 'threat';
-    }
-    if (selectedCaseId === 'SENT-109D') {
+    if (selectedCase.status === 'verified') {
       if (nodeId === 'ceo_email' || nodeId === 'secure_ledger') return 'verified';
     }
     return 'default';
   };
 
-  const handleAddNote = (e: FormEvent) => {
+  const handleAddNote = async (e: FormEvent) => {
     e.preventDefault();
-    if (!newNote.trim()) return;
+    if (!newNote.trim() || !selectedCaseId) return;
 
-    const timestamp = new Date().toUTCString().split(' ')[4] + ' UTC';
-    const newEvent: TimelineEvent = {
-      id: 'manual-' + Date.now(),
-      timestamp,
-      title: 'Manual Investigator Annotation',
-      type: 'info',
-      description: newNote,
-      sourceId: selectedCaseId,
-      agentName: 'Secure_Human_Desk'
-    };
-
-    setTimelineEvents(prev => [newEvent, ...prev]);
+    try {
+      await addAnnotation(selectedCaseId, newNote);
+    } catch (err) {
+      console.error('Failed to save manual annotation:', err);
+    }
     setNewNote('');
   };
-
-  // Combined list of live database cases and pre-loaded mock cases
-  const combinedEvidenceItems: EvidenceItem[] = [
-    ...liveCases.map(c => ({
-      id: c.case_id,
-      type: 'thread' as const,
-      title: `Slack Case #${c.short_id}`,
-      source: `Slack Event`,
-      status: (c.verdict === 'FRAUD_LIKELY' ? 'threat' : c.verdict === 'REVIEW' ? 'suspicious' : c.verdict === 'CLEAR' ? 'verified' : 'unverified') as any,
-      timestamp: c.created_at,
-      description: `Slack triggered investigation. Current status: ${c.status}`,
-      content: `Status: ${c.status}\nVerdict: ${c.verdict || 'PENDING'}\nRisk Score: ${c.risk_score !== null ? (c.risk_score * 100).toFixed(1) + '%' : 'N/A'}\nAmount at Risk: $${c.amount_at_risk.toLocaleString()}`,
-      confidence: c.risk_score !== null ? Math.round(c.risk_score * 100) : 0,
-    })),
-    ...evidenceItems
-  ];
 
   // Filter evidence lists
   const filteredEvidence = combinedEvidenceItems.filter(item => 
@@ -276,10 +194,18 @@ export default function DashboardConsole({ onExit }: DashboardConsoleProps) {
     item.id.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const selectedCase = combinedEvidenceItems.find(item => item.id === selectedCaseId) || combinedEvidenceItems[0];
-  const selectedTimeline = selectedCaseId.startsWith('SENT-') 
-    ? timelineEvents.filter(e => e.sourceId === selectedCaseId)
-    : liveTimelineEvents;
+  const selectedCase = combinedEvidenceItems.find(item => item.id === selectedCaseId) || {
+    id: '',
+    type: 'thread' as const,
+    title: 'No Case Selected',
+    source: 'N/A',
+    status: 'unverified' as const,
+    timestamp: '',
+    description: 'Select a case from the feed to view its forensic timeline.',
+    content: 'No case data loaded.',
+    confidence: 0
+  };
+  const selectedTimeline = liveTimelineEvents;
 
   return (
     <div className="min-h-screen bg-obsidian text-slate-white flex flex-col font-sans select-none overflow-hidden h-screen">
@@ -668,11 +594,7 @@ export default function DashboardConsole({ onExit }: DashboardConsoleProps) {
             <div className="absolute bottom-4 left-4 right-4 bg-obsidian border border-slate-white/5 rounded-xs p-3">
               <span className="font-mono text-[8px] text-slate-white/30 tracking-widest uppercase block mb-1">MAP FOCUS DIRECTORY</span>
               <p className="font-mono text-[9px] text-slate-white/60">
-                {selectedCaseId === 'SENT-109A' && "Active spectrograph discrepancy identified between CEO_VOICE_8 and central verified parameters."}
-                {selectedCaseId === 'SENT-109B' && "Routing code mismatch detected between ledger supplier records and external invoice."}
-                {selectedCaseId === 'SENT-109C' && "Incompatible logins mapped between US email client and SG voicecall VPN IP."}
-                {selectedCaseId === 'SENT-109D' && "DKIM signature integrity matches approved CA standards."}
-                {selectedCaseId === 'SENT-110A' && "Transaction draft paused, holding for central synapse consensus."}
+                {selectedCase.id ? `Case short ID: ${selectedCase.id.slice(0, 8)}. Current verdict status: ${selectedCase.status.toUpperCase()}.` : "Select an active case to view mapped relationships."}
               </p>
             </div>
 

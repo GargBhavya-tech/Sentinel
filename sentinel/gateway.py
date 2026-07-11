@@ -160,6 +160,11 @@ class LabelRequest(BaseModel):
     label: int                        # 0 = legitimate, 1 = fraud
 
 
+class AnnotateRequest(BaseModel):
+    description: str
+    agent_name: str = "Secure_Human_Desk"
+
+
 # ── Slack events endpoint ─────────────────────────────────────────────────────
 
 @api.post("/slack/events")
@@ -474,6 +479,21 @@ async def submit_label(body: LabelRequest) -> dict:
     result = submit_label(body.case_id, body.label)
     lift = compute_accuracy_lift()
     return {**result, "accuracy_lift": lift.__dict__}
+
+
+@api.post("/cases/{case_id}/annotate")
+async def add_case_annotation(case_id: str, body: AnnotateRequest) -> dict:
+    """Add a manual investigator annotation to a case's audit log."""
+    try:
+        entry = await repo.append_audit_event(
+            case_id=case_id,
+            event_type="manual_annotation",
+            payload={"description": body.description, "agent": body.agent_name},
+        )
+        return {"status": "ok", "entry_id": entry.entry_id}
+    except Exception as e:
+        log.error("Failed to add annotation: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @api.get("/graph/snapshot")

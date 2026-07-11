@@ -11,6 +11,7 @@ import PlatformTransition from './components/PlatformTransition';
 import DashboardConsole from './components/DashboardConsole';
 import { useInvestigation } from './hooks/useInvestigation';
 import CustomCursor from './components/CustomCursor';
+import EvidenceSubmitModal from './components/EvidenceSubmitModal';
 
 type ViewState = 'landing' | 'transitioning' | 'dashboard';
 
@@ -43,8 +44,24 @@ export default function App() {
     }
   };
 
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
   const handleEnterConsole = () => {
+    setIsModalOpen(true);
+  };
+
+  const handleDirectConsole = () => {
     setViewState('transitioning');
+  };
+
+  const handleDeployCase = async (payload: any) => {
+    setIsModalOpen(false);
+    setViewState('transitioning');
+    try {
+      await investigation.startInvestigation(payload);
+    } catch (err) {
+      console.error("Failed to start investigation:", err);
+    }
   };
 
   // Complete the "syncing console" flash from ANY entry point. PlatformTransition
@@ -102,7 +119,7 @@ export default function App() {
             {/* Header */}
             <Navbar 
               onNavClick={handleNavClick} 
-              onEnterConsole={handleEnterConsole}
+              onEnterConsole={handleDirectConsole}
               isDashboardOpen={false}
             />
 
@@ -186,6 +203,13 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Evidence Submit Modal */}
+      <EvidenceSubmitModal 
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onDeploy={handleDeployCase}
+      />
     </div>
   );
 }
