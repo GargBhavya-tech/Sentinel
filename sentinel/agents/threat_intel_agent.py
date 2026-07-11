@@ -106,14 +106,7 @@ class ThreatIntelResult:
     flags: list[str] = field(default_factory=list)
 
     def to_claims(self) -> list[Claim]:
-        return [
-            Claim(
-                field="domain_age_days",
-                value=self.domain_age_days if self.domain_age_days is not None else -1,
-                confidence=0.90,
-                source_pointer=f"{self.case_id}/threat_intel#{self.domain}",
-                agent="threat_intel",
-            ),
+        claims: list[Claim] = [
             Claim(
                 field="threat_risk",
                 value=self.risk_score,
@@ -122,6 +115,22 @@ class ThreatIntelResult:
                 agent="threat_intel",
             ),
         ]
+        # Only emit domain_age_days when it is a REAL, non-negative value.
+        # Previously an unknown age was encoded as -1, which the reconciler
+        # read as "registered -1 days ago" and floored risk to 0.90 — a
+        # systemic false positive on every domain we couldn't resolve.
+        if self.domain_age_days is not None and self.domain_age_days >= 0:
+            claims.insert(
+                0,
+                Claim(
+                    field="domain_age_days",
+                    value=self.domain_age_days,
+                    confidence=0.90,
+                    source_pointer=f"{self.case_id}/threat_intel#{self.domain}",
+                    agent="threat_intel",
+                ),
+            )
+        return claims
 
 
 # ── Main entry point ───────────────────────────────────────────────────────────

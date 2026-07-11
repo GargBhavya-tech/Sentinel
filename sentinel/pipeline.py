@@ -72,7 +72,7 @@ def _single_model_baseline(claims: list[Claim]) -> Verdict:
         ratio >= SOLO_RATIO
         or tone_anomaly >= SOLO_TONE
         or voice_mismatch >= SOLO_VOICE
-        or domain_age_days <= SOLO_DOMAIN_DAYS
+        or (0 <= domain_age_days <= SOLO_DOMAIN_DAYS)
         or injection_present
     )
     verdict = "FRAUD_LIKELY" if solo_hit else "CLEAR"

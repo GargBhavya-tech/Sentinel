@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: sentinel
+    env: python
+    buildCommand: chmod +x build.sh && ./build.sh
+    startCommand: uvicorn sentinel.gateway:api --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sentinel-db
+          property: connectionString
+      - key: SLACK_BOT_TOKEN
+        sync: false
+        description: "Your Slack Bot Token starting with xoxb- from api.slack.com"
+      - key: SLACK_SIGNING_SECRET
+        sync: false
+        description: "Your Slack App Signing Secret from api.slack.com -> Basic Information"
+      - key: PII_HMAC_PEPPER
+        generateValue: true
+        description: "Auto-generated secure HMAC pepper for PII redaction"
+      - key: CORS_ORIGINS
+        value: "http://localhost:3000,http://localhost:5173"
+        description: "Origins allowed for CORS (will auto-include Render's URL)"
+
+databases:
+  - name: sentinel-db
+    plan: free
+    postgresMajorVersion: 16

@@ -45,6 +45,7 @@ class Case:
     status: str = "created"  # created → analyzing → verdict → resolved
     risk_score: Optional[float] = None
     verdict: Optional[str] = None  # FRAUD_LIKELY | REVIEW | CLEAR
+    amount_at_risk: float = 0.0  # dollars at risk — for expected-loss triage (#24)
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
 

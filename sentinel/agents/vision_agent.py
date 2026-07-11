@@ -166,6 +166,12 @@ def analyze(
             text = _extract_pdf_text(path)
         elif ext in (".png", ".jpg", ".jpeg", ".tiff", ".bmp"):
             text = _extract_image_text(path)
+        elif ext in (".txt", ".csv"):
+            # Plain-text / CSV invoices — read directly (no OCR needed).
+            try:
+                text = path.read_text(errors="ignore")
+            except OSError as e:
+                log.warning("vision: could not read %s (%s)", path.name, e)
         else:
             log.warning(
                 "vision: unsupported file type %s — text extraction skipped", ext

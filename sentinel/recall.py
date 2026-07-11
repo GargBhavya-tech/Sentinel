@@ -33,6 +33,10 @@ log = logging.getLogger(__name__)
 
 _STORE: dict[str, tuple[list[float], dict]] = {}
 
+# Cap the in-memory store so a long-running process can't leak unboundedly.
+# (Production swaps this whole store for pgvector; the cap is a safety net.)
+_STORE_MAX = 5000
+
 
 @dataclass
 class RecallMatch:
@@ -99,6 +103,9 @@ def store_case(
 ) -> None:
     """Store a case's embedding for future recall lookups."""
     vec = _embed_claims(claims_dict)
+    # Evict the oldest entry (dicts preserve insertion order) once at capacity.
+    if case_id not in _STORE and len(_STORE) >= _STORE_MAX:
+        _STORE.pop(next(iter(_STORE)))
     _STORE[case_id] = (
         vec,
         {

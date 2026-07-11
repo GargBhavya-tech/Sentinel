@@ -36,12 +36,38 @@ from .pool import get_db_pool
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
 
+class _ConnAdapter:
+    """Give a psycopg3 AsyncConnection the combined execute+fetch helpers this
+    module is written against.
+
+    psycopg3 puts `fetchone`/`fetchall` on the cursor, not the connection, and
+    they take no SQL. Every repo function here calls `conn.fetchone(sql, params)`
+    / `conn.fetchall(sql, params)`, so we wrap the raw connection and run
+    execute-then-fetch on a fresh cursor for each call. Commit/rollback is still
+    handled by the surrounding `pool.connection()` context manager.
+    """
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def fetchone(self, sql, params=None):
+        cur = await self._conn.execute(sql, params or ())
+        return await cur.fetchone()
+
+    async def fetchall(self, sql, params=None):
+        cur = await self._conn.execute(sql, params or ())
+        return await cur.fetchall()
+
+    async def execute(self, sql, params=None):
+        return await self._conn.execute(sql, params or ())
+
+
 @asynccontextmanager
 async def _conn():
     """Context manager: borrow a connection from the pool."""
     pool = await get_db_pool()
     async with pool.connection() as c:
-        yield c
+        yield _ConnAdapter(c)
 
 
 def _sha256(data: str) -> str:
@@ -55,6 +81,7 @@ async def create_case(
     slack_channel: str,
     slack_ts: str,
     reporter_slack_id: str,
+    amount_at_risk: float = 0.0,
     conn: Optional[psycopg.AsyncConnection] = None,
 ) -> Case:
     """INSERT a new case in 'created' status and return it."""
@@ -62,11 +89,12 @@ async def create_case(
         slack_channel=slack_channel,
         slack_ts=slack_ts,
         reporter_slack_id=reporter_slack_id,
+        amount_at_risk=amount_at_risk,
     )
     sql = """
         INSERT INTO cases
-            (case_id, slack_channel, slack_ts, reporter_slack_id, status)
-        VALUES (%s, %s, %s, %s, %s)
+            (case_id, slack_channel, slack_ts, reporter_slack_id, status, amount_at_risk)
+        VALUES (%s, %s, %s, %s, %s, %s)
         RETURNING created_at, updated_at
     """
     async with _conn() if conn is None else _noop(conn) as c:
@@ -78,6 +106,7 @@ async def create_case(
                 case.slack_ts,
                 case.reporter_slack_id,
                 case.status,
+                case.amount_at_risk,
             ),
         )
         case.created_at = row[0]
@@ -123,6 +152,9 @@ async def get_case(
 
 
 def _row_to_case(row) -> Case:
+    # amount_at_risk is appended as row[9] only by SELECTs that request it
+    # (e.g. list_cases); single-case fetches omit it and it defaults to 0.0.
+    amount = float(row[9]) if len(row) > 9 and row[9] is not None else 0.0
     return Case(
         case_id=str(row[0]),
         slack_channel=row[1],
@@ -131,6 +163,7 @@ def _row_to_case(row) -> Case:
         status=row[4],
         risk_score=float(row[5]) if row[5] is not None else None,
         verdict=row[6],
+        amount_at_risk=amount,
         created_at=row[7],
         updated_at=row[8],
     )
@@ -234,6 +267,21 @@ async def append_audit_event(
         RETURNING entry_id, created_at
     """
     async with _conn() if conn is None else _noop(conn) as c:
+        # Serialize appends across concurrent investigations. Without this,
+        # two writers read the SAME prev_hash and fork the chain, which makes
+        # verify_audit_chain() report tampering (prev_hash mismatch). The
+        # transaction-scoped advisory lock is released automatically on commit
+        # (i.e. when the pool.connection() block exits).
+        #
+        # The lock MUST be global (this fixed key), NOT per-case: the chain is a
+        # single global sequence (sql_prev reads the last entry across ALL
+        # cases, and verify_audit_chain walks every entry in entry_id order). A
+        # per-case lock would let two different cases read the same global tip
+        # concurrently and fork the chain — reintroducing the exact bug this
+        # prevents. Appends are sub-millisecond, so the convoy cost is negligible
+        # next to the tamper-evidence guarantee.
+        _AUDIT_CHAIN_LOCK_KEY = 911017
+        await c.execute("SELECT pg_advisory_xact_lock(%s)", (_AUDIT_CHAIN_LOCK_KEY,))
         prev_row = await c.fetchone(sql_prev)
         prev_hash = prev_row[0] if prev_row else ""
 
@@ -377,14 +425,82 @@ async def promote_rule(
     )
 
 
+
+# ─── List Cases ──────────────────────────────────────────────────────────────
+
+
+async def list_cases(
+    limit: int = 20,
+    order_by: str = "recent",
+    conn=None,
+) -> list[Case]:
+    """SELECT recent cases.
+
+    order_by:
+      "recent"        → created_at DESC (default)
+      "expected_loss" → risk_score × amount_at_risk DESC (triage by $ exposure, #24)
+    """
+    order_sql = (
+        "ORDER BY (COALESCE(risk_score,0) * COALESCE(amount_at_risk,0)) DESC, "
+        "created_at DESC"
+        if order_by == "expected_loss"
+        else "ORDER BY created_at DESC"
+    )
+    sql = f"""
+        SELECT case_id, slack_channel, slack_ts, reporter_slack_id,
+               status, risk_score, verdict, created_at, updated_at, amount_at_risk
+        FROM cases
+        {order_sql}
+        LIMIT %s
+    """
+    async with _conn() if conn is None else _noop(conn) as c:
+        rows = await c.fetchall(sql, (limit,))
+    return [_row_to_case(r) for r in (rows or [])]
+
+
+# ─── Audit Chain for a Case ───────────────────────────────────────────────────
+
+
+async def get_audit_chain(
+    case_id: str,
+    conn=None,
+) -> list[dict]:
+    """Return all audit entries for a specific case."""
+    sql = """
+        SELECT entry_id, case_id, event_type, payload, prev_hash, entry_hash, created_at
+        FROM audit_chain
+        WHERE case_id = %s
+        ORDER BY entry_id ASC
+    """
+    async with _conn() if conn is None else _noop(conn) as c:
+        rows = await c.fetchall(sql, (case_id,))
+    result = []
+    for r in (rows or []):
+        result.append({
+            "entry_id": r[0],
+            "case_id": str(r[1]),
+            "event_type": r[2],
+            "payload": r[3] if isinstance(r[3], dict) else {},
+            "prev_hash": r[4][:16] + "…" if r[4] else "",
+            "entry_hash": r[5][:16] + "…" if r[5] else "",
+            "created_at": str(r[6]) if r[6] else "",
+        })
+    return result
+
+
 # ─── connection context helper ────────────────────────────────────────────────
 
 
 class _noop:
-    """Wrap an already-open connection so 'async with' is a no-op."""
+    """Wrap an already-open connection so 'async with' is a no-op.
+
+    Yields the same execute+fetch adapter as `_conn()` so repo functions behave
+    identically whether they borrow from the pool or reuse a caller's
+    connection. If an adapter is passed in, it's used as-is.
+    """
 
     def __init__(self, conn):
-        self._conn = conn
+        self._conn = conn if isinstance(conn, _ConnAdapter) else _ConnAdapter(conn)
 
     async def __aenter__(self):
         return self._conn

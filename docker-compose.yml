@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   db:
     image: postgres:16-alpine
@@ -20,6 +18,50 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sentinel_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    # Load secrets (SLACK_*, PII_HMAC_PEPPER, CONSOLE_KEY, VIRUSTOTAL_API_KEY)
+    # from .env when present. Optional so the zero-key demo still boots without it.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Explicit values here OVERRIDE .env — DATABASE_URL must point at the
+      # `db` service inside the compose network, not localhost.
+      DATABASE_URL: postgresql://sentinel:sentinel@db:5432/sentinel
+      HOST: 0.0.0.0
+      PORT: "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    command: uvicorn sentinel.gateway:api --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    image: node:20-alpine
+    container_name: sentinel_frontend
+    working_dir: /app
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    depends_on:
+      - backend
+    environment:
+      - VITE_API_URL=http://backend:8000
+      - DISABLE_HMR=true
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./sentinel-frontend:/app
+    command: sh -c "npm install && npm run dev"
 
 volumes:
   sentinel_pgdata:

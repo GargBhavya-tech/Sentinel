@@ -73,7 +73,8 @@ def synthesize_rule(
             tone_threshold = round(float(tone) * _TONE_SLACK, 3)
 
     # ── voice mismatch ─────────────────────────────────────────────────────
-    if "voice_vs_transcript" in axes:
+    # The reconciler emits this axis as "voice_vs_baseline" (see reconciler.py).
+    if "voice_vs_baseline" in axes:
         voice = claims_dict.get("voice_mismatch")
         if voice is not None:
             voice_threshold = round(float(voice) * _VOICE_SLACK, 3)

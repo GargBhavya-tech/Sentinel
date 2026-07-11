@@ -149,6 +149,38 @@ TOOLS = [
             "required": ["amount_at_risk", "risk_score"],
         },
     },
+    {
+        "name": "quarantine",
+        "description": (
+            "Quarantine one or more Slack nodes (users, channels, files) "
+            "found by the blast-radius mapper. Idempotent — re-quarantining "
+            "an already-quarantined node is a no-op. Writes an audit entry."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "case_id": {
+                    "type": "string",
+                    "description": "The Sentinel case that triggered the quarantine.",
+                },
+                "node_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Slack node IDs to quarantine (user/channel/file IDs).",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Human-readable reason logged to the audit chain.",
+                },
+                "quarantined_by": {
+                    "type": "string",
+                    "description": "Slack user ID of the analyst, or 'system'.",
+                    "default": "system",
+                },
+            },
+            "required": ["case_id", "node_ids", "reason"],
+        },
+    },
 ]
 
 
@@ -252,12 +284,31 @@ def _tool_expected_loss(params: dict) -> dict:
     }
 
 
+def _tool_quarantine(params: dict) -> dict:
+    """Quarantine one or more nodes from the blast-radius result."""
+    from .graph.quarantine import quarantine
+
+    case_id = params.get("case_id", "mcp_case")
+    node_ids = params.get("node_ids", [])
+    reason = params.get("reason", "Flagged by Sentinel MCP")
+    quarantined_by = params.get("quarantined_by", "system")
+
+    result = quarantine(
+        case_id=case_id,
+        node_ids=node_ids,
+        reason=reason,
+        quarantined_by=quarantined_by,
+    )
+    return result.to_dict()
+
+
 TOOL_MAP = {
     "get_case": _tool_get_case,
     "run_contradiction_check": _tool_run_contradiction_check,
     "blast_radius": _tool_blast_radius,
     "synthesize_rule": _tool_synthesize_rule,
     "expected_loss": _tool_expected_loss,
+    "quarantine": _tool_quarantine,
 }
 
 

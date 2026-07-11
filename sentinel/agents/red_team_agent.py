@@ -13,12 +13,39 @@ from sentinel.claims import Claim
 
 log = logging.getLogger(__name__)
 
-# Mock accuracy tracking state (in reality this would be persisted to the DB)
-_session_stats = {"total_cases": 5, "correct_defenses": 2}
+# Real per-session accuracy tracking. The Red Team always argues the INNOCENT
+# case; it is "correct" when the case did NOT end up FRAUD_LIKELY (its innocent
+# explanation held). Reset per process — this is a live, session-scoped tally,
+# not a hardcoded string.
+_session_stats = {"total": 0, "correct": 0}
 
 
-def generate_defense(claims: list[Claim]) -> dict[str, Any]:
-    """Analyze the claims and generate the most plausible innocent explanation."""
+def reset_track_record() -> None:
+    """Reset the session tally (used by tests and at session start)."""
+    _session_stats["total"] = 0
+    _session_stats["correct"] = 0
+
+
+def _record_outcome(verdict: str) -> None:
+    _session_stats["total"] += 1
+    if verdict != "FRAUD_LIKELY":
+        # The innocent explanation was vindicated (case not confirmed fraud).
+        _session_stats["correct"] += 1
+
+
+def _track_record_str() -> str:
+    t, c = _session_stats["total"], _session_stats["correct"]
+    if t == 0:
+        return "no prior cases this session"
+    return f"correct on {c} of {t} case(s) this session"
+
+
+def generate_defense(claims: list[Claim], verdict: str | None = None) -> dict[str, Any]:
+    """Generate the most plausible innocent explanation for the flagged case.
+
+    When `verdict` is supplied, the case outcome is recorded into the live
+    session track record so the Supervisor can weigh Red Team's accuracy.
+    """
     defense_str = "No benign explanation could be synthesized for these signals."
 
     claims_dict = {c.field: c.value for c in claims}
@@ -35,13 +62,10 @@ def generate_defense(claims: list[Claim]) -> dict[str, Any]:
     elif voice_mismatch > 0.6:
         defense_str = "The voice anomaly could be the result of severe background noise, a bad microphone connection, or extreme vocal strain from illness."
 
-    # Increment our mock session stats to simulate an active track record
-    _session_stats["total_cases"] += 1
-    # Randomly increment correct_defenses for the sake of the track record demo
-    if _session_stats["total_cases"] % 3 == 0:
-        _session_stats["correct_defenses"] += 1
+    if verdict is not None:
+        _record_outcome(verdict)
 
     return {
         "defense": defense_str,
-        "track_record": f"correct on {_session_stats['correct_defenses']} of last {_session_stats['total_cases']}",
+        "track_record": _track_record_str(),
     }

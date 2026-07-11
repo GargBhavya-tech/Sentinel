@@ -31,8 +31,10 @@ def compute_pagerank(
         return {}
 
     try:
-        # PageRank is usually computed on a directed graph.
-        pagerank_scores = nx.pagerank(G, alpha=alpha, weight="count")
+        # PageRank is computed on an undirected view so that hub users
+        # (who have outgoing edges to many channels/files) receive high scores.
+        undirected_G = G.to_undirected(as_view=True)
+        pagerank_scores = nx.pagerank(undirected_G, alpha=alpha, weight="count")
         return pagerank_scores
     except Exception as e:
         log.error("Failed to compute PageRank: %s", e)
@@ -97,3 +99,33 @@ def analyze_blast_radius(start_nodes: list[str] | None = None) -> dict[str, Any]
         )
 
     return result
+
+
+def top_spreaders(
+    nodes: list[str] | None = None,
+    n: int = 5,
+) -> list[tuple[str, float]]:
+    """Return the top-N nodes by PageRank score (node_id, score) descending.
+
+    Used by the blast-radius result and the React console's super-spreader panel.
+    Filters to user-type nodes only (the propagation hubs that matter).
+    Falls back to all node types if no users are present.
+    """
+    scores = compute_pagerank(nodes)
+    G = get_graph()
+    if nodes:
+        G = G.subgraph(nodes)
+
+    # Prefer user nodes
+    user_scores = [
+        (nid, score)
+        for nid, score in scores.items()
+        if G.nodes.get(nid, {}).get("node_type") == "user"
+    ]
+    if user_scores:
+        user_scores.sort(key=lambda x: -x[1])
+        return user_scores[:n]
+
+    # Fallback: all nodes
+    all_scores = sorted(scores.items(), key=lambda x: -x[1])
+    return all_scores[:n]
