@@ -2,6 +2,7 @@ services:
   - type: web
     name: sentinel
     env: python
+    plan: free
     buildCommand: chmod +x build.sh && ./build.sh
     startCommand: uvicorn sentinel.gateway:api --host 0.0.0.0 --port $PORT
     envVars:
