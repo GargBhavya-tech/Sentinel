@@ -31,6 +31,8 @@ import type {
   ComplianceResult,
   HoneypotResult,
   ExpectedLoss,
+  VoiceAnalysis,
+  FileForensics,
 } from '../types';
 
 // ── Default idle agent list (shown before any SSE events arrive) ───────────────
@@ -452,6 +454,89 @@ export function useInvestigation() {
             },
             timeline: [timelineEntry, ...prev.timeline],
           };
+        }
+
+        case 'evidence_ingested':
+          return prev;
+
+        case 'file_forensics': {
+          const fx: FileForensics = {
+            suspicious: (data.suspicious as boolean) || false,
+            summary: (data.summary as string) || '',
+            hiddenPayloads: (data.hidden_payloads as string[]) || [],
+            entropyAnomalies: (data.entropy_anomalies as number) || 0,
+          };
+          const timelineEntry: TimelineEvent = {
+            id: `forensics-${Date.now()}`,
+            timestamp: new Date().toUTCString().split(' ')[4] + ' UTC',
+            title: fx.suspicious ? 'Hidden Payload Detected' : 'File Forensics Clean',
+            type: fx.suspicious ? 'threat' : 'info',
+            description: fx.suspicious
+              ? `${fx.summary}. ${fx.hiddenPayloads.length ? `Recovered: "${fx.hiddenPayloads[0]}"` : ''}`
+              : 'No hidden payloads or high-entropy regions.',
+            sourceId: 'file_forensics',
+            agentName: 'File_Forensics_Engine',
+          };
+          return { ...prev, fileForensics: fx, timeline: [timelineEntry, ...prev.timeline] };
+        }
+
+        case 'mcp_baseline': {
+          const timelineEntry: TimelineEvent = {
+            id: `mcp-${Date.now()}`,
+            timestamp: new Date().toUTCString().split(' ')[4] + ' UTC',
+            title: 'MCP Baseline Retrieved',
+            type: 'info',
+            description: `Pulled ${data.sample_count || 0} writing sample(s) for ${data.user} via ${data.source} — stylometric fingerprint established.`,
+            sourceId: 'mcp_baseline',
+            agentName: 'MCP_History_Retrieval',
+          };
+          return { ...prev, timeline: [timelineEntry, ...prev.timeline] };
+        }
+
+        case 'voice_analysis': {
+          const va: VoiceAnalysis = {
+            spoofScore: (data.spoof_score as number) || 0,
+            voiceMismatch: (data.voice_mismatch as number) || 0,
+            detectorAuc: (data.detector_auc as number) ?? null,
+            detail: (data.detail as string) || '',
+          };
+          const timelineEntry: TimelineEvent = {
+            id: `voice-${Date.now()}`,
+            timestamp: new Date().toUTCString().split(' ')[4] + ' UTC',
+            title: 'Voice Authenticity Analyzed',
+            type: va.voiceMismatch >= 0.5 ? 'threat' : 'info',
+            description: `Acoustic anti-spoof score ${(va.spoofScore * 100) | 0}% · detector AUC ${va.detectorAuc ?? '—'} on curated pair.`,
+            sourceId: 'voice_analysis',
+            agentName: 'Voice_Authenticity_Agent',
+          };
+          return { ...prev, voiceAnalysis: va, timeline: [timelineEntry, ...prev.timeline] };
+        }
+
+        case 'demo_signals_injected': {
+          const timelineEntry: TimelineEvent = {
+            id: `demo-${Date.now()}`,
+            timestamp: new Date().toUTCString().split(' ')[4] + ' UTC',
+            title: 'Curated Demo Evidence Loaded',
+            type: 'info',
+            description: (data.note as string) || 'Curated cross-modal evidence injected into the reconciler.',
+            sourceId: 'demo_signals',
+            agentName: 'Demo_Harness',
+          };
+          return { ...prev, timeline: [timelineEntry, ...prev.timeline] };
+        }
+
+        case 'self_play': {
+          const caught = (data.caught_by_engine as boolean) ?? false;
+          const timelineEntry: TimelineEvent = {
+            id: `selfplay-${Date.now()}`,
+            timestamp: new Date().toUTCString().split(' ')[4] + ' UTC',
+            title: caught ? 'Self-Play: Engine Caught Its Own Fake' : 'Self-Play: Fake Slipped Through',
+            type: caught ? 'success' : 'warning',
+            description: `Sentinel forged the strongest fake and re-ran itself — verdict: ${data.verdict_returned || '?'}.`,
+            sourceId: 'self_play',
+            agentName: 'Adversarial_Self_Play',
+          };
+          return { ...prev, timeline: [timelineEntry, ...prev.timeline] };
         }
 
         case 'stream_end':

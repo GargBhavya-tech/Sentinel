@@ -218,18 +218,22 @@ def _scan_eof(data: bytes, ext: str, result: ForensicsResult, label: str) -> Non
 
     trailer = data[best_pos:]
 
-    # Strip benign trailing whitespace / newlines
-    trailer_stripped = trailer.strip(b"\x00\t\n\r \xff")
-    if len(trailer_stripped) < MIN_PAYLOAD_BYTES:
+    # Significance check may strip both ends, but the extracted payload must only
+    # have benign TRAILING padding removed: the EOF marker variants already
+    # consume any newline right after %%EOF, so the payload starts at best_pos.
+    # Stripping leading bytes would corrupt an obfuscated payload whose first
+    # decoded byte happens to map to a whitespace value (e.g. 'H' ^ 0x42 = \n).
+    if len(trailer.strip(b"\x00\t\n\r \xff")) < MIN_PAYLOAD_BYTES:
         return  # nothing significant
+    content = trailer.rstrip(b"\x00\t\n\r \xff")
 
     payload = HiddenPayload(
         offset=best_pos,
-        raw_bytes=trailer_stripped,
+        raw_bytes=content,
     )
 
     # Attempt XOR decode with the known demo key
-    decoded_bytes = bytes(b ^ XOR_KEY for b in trailer_stripped)
+    decoded_bytes = bytes(b ^ XOR_KEY for b in content)
     try:
         decoded_str = decoded_bytes.decode("utf-8")
         if decoded_str.isprintable():

@@ -87,6 +87,15 @@ async def lifespan(api: FastAPI):
         )
     await get_db_pool()
     log.info("DB pool ready.")
+    # Apply idempotent SQL migrations so an existing Postgres volume picks up
+    # 002/003 without manual psql (docker-entrypoint only runs them on a fresh
+    # volume). No-ops in memory:// mode.
+    try:
+        from sentinel.db.migrate import run_migrations
+
+        await run_migrations()
+    except Exception as e:
+        log.warning("startup migrations skipped: %s", e)
     yield
     log.info("Sentinel gateway shutting down — closing DB pool…")
     await close_db_pool()
@@ -232,18 +241,9 @@ async def start_investigation(
     GET /api/investigate/{case_id}/stream to receive SSE events.
     """
     _rate_limit(request)
-    # Create DB case
-    case = await repo.create_case(
-        slack_channel=body.channel,
-        slack_ts=str(uuid.uuid4()),
-        reporter_slack_id=body.reporter,
-    )
-    log.info("React console investigation started — case %s", case.case_id[:8])
 
-    # Create SSE queue before launching background task
-    q = create_case_queue(case.case_id)
-
-    # Override with flagship demo signals if requested
+    # Resolve the description + amount first (demo override), so the case row
+    # persists the amount_at_risk used for expected-loss triage (#24).
     description = body.description
     amount = body.amount_at_risk
     if body.demo_case:
@@ -251,6 +251,18 @@ async def start_investigation(
 
         description = DEMO_DESCRIPTION
         amount = DEMO_AMOUNT
+
+    # Create DB case
+    case = await repo.create_case(
+        slack_channel=body.channel,
+        slack_ts=str(uuid.uuid4()),
+        reporter_slack_id=body.reporter,
+        amount_at_risk=amount,
+    )
+    log.info("React console investigation started — case %s", case.case_id[:8])
+
+    # Create SSE queue before launching background task
+    q = create_case_queue(case.case_id)
 
     # Resolve an uploaded file (evidence_id) to its stored path; fall back to a
     # directly-supplied file_url. The worker's download_evidence handles both.
@@ -352,10 +364,13 @@ async def get_case(case_id: str) -> dict:
 
 
 @api.get("/cases")
-async def list_cases(limit: int = 20) -> dict:
-    """List recent cases for the dashboard queue."""
+async def list_cases(limit: int = 20, order_by: str = "recent") -> dict:
+    """List cases for the dashboard queue.
+
+    order_by="expected_loss" ranks by risk × amount_at_risk (triage by $ exposure).
+    """
     try:
-        cases = await repo.list_cases(limit=limit)
+        cases = await repo.list_cases(limit=limit, order_by=order_by)
         return {
             "cases": [
                 {
@@ -364,6 +379,8 @@ async def list_cases(limit: int = 20) -> dict:
                     "status": c.status,
                     "verdict": c.verdict,
                     "risk_score": c.risk_score,
+                    "amount_at_risk": c.amount_at_risk,
+                    "expected_loss": round((c.risk_score or 0) * (c.amount_at_risk or 0), 2),
                     "created_at": str(c.created_at) if hasattr(c, "created_at") else "",
                 }
                 for c in cases

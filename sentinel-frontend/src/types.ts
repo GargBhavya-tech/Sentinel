@@ -193,8 +193,28 @@ export type SSEEventType =
   | 'honeypot_result'
   | 'expected_loss'
   | 'verdict'
+  | 'evidence_ingested'
+  | 'file_forensics'
+  | 'mcp_baseline'
+  | 'voice_analysis'
+  | 'demo_signals_injected'
+  | 'self_play'
   | 'error'
   | 'stream_end';
+
+export interface VoiceAnalysis {
+  spoofScore: number;
+  voiceMismatch: number;
+  detectorAuc: number | null;
+  detail: string;
+}
+
+export interface FileForensics {
+  suspicious: boolean;
+  summary: string;
+  hiddenPayloads: string[];
+  entropyAnomalies: number;
+}
 
 export interface SSEEvent {
   event: SSEEventType;
@@ -221,4 +241,6 @@ export interface InvestigationState {
   redTeam: { defense: string; trackRecord: string } | null;
   similarCases: Array<{ caseId: string; similarity: number; verdict: string }>;
   error: string | null;
+  voiceAnalysis?: VoiceAnalysis | null;
+  fileForensics?: FileForensics | null;
 }

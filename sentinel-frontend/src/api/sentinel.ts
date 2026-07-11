@@ -74,6 +74,9 @@ export function subscribeToInvestigation(
     'silence_triggered', 'contradiction_result', 'blast_radius',
     'rule_synthesized', 'federation_check', 'compliance_check',
     'red_team', 'honeypot_result', 'expected_loss', 'verdict',
+    // Newer backend beats — must be registered or EventSource drops them.
+    'evidence_ingested', 'file_forensics', 'mcp_baseline',
+    'voice_analysis', 'demo_signals_injected', 'self_play',
     'error', 'stream_end',
   ];
 

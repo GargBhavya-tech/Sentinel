@@ -247,6 +247,28 @@ async def investigate_streaming(
         evidence_path = await download_evidence(file_url) if file_url else None
         if evidence_path:
             await _emit(q, "evidence_ingested", {"analyzing_real_file": True})
+            # File forensics pre-pass (#5) — runs BEFORE any agent touches the
+            # file: entropy scan + data hidden after the EOF marker.
+            try:
+                from sentinel.file_forensics import scan as forensics_scan
+
+                fx = forensics_scan(evidence_path)
+                await _emit(q, "file_forensics", {
+                    "suspicious": fx.suspicious,
+                    "summary": fx.summary,
+                    "hidden_payloads": [p.preview for p in fx.hidden_payloads],
+                    "entropy_anomalies": len(fx.entropy_anomalies),
+                    "source_pointers": fx.source_pointers[:5],
+                })
+                if fx.suspicious:
+                    await repo.append_audit_event(
+                        case_id=case_id,
+                        event_type="file_forensics",
+                        payload={"summary": fx.summary,
+                                 "hidden": [p.preview for p in fx.hidden_payloads]},
+                    )
+            except Exception as e:
+                log.warning("file forensics failed: %s", e)
 
         # Scan the real domain from the report text (fixes the hardcoded stub).
         _dm = _DOMAIN_RE.search(event_text or "")
@@ -359,8 +381,18 @@ async def investigate_streaming(
         if demo_case:
             from sentinel.demo_fixtures import demo_claims
 
-            curated = demo_claims(case_id)
+            # Drop the placeholder voice claim and replace it with a REAL run of
+            # the acoustic detector on a curated cloned clip (measured score+AUC).
+            curated = [c for c in demo_claims(case_id) if c.field != "voice_mismatch"]
+            vres = voice_agent.demo_voice_result(case_id, reporter)
+            curated.append(vres.to_claim())
             claims.extend(curated)
+            await _emit(q, "voice_analysis", {
+                "spoof_score": vres.spoof_score,
+                "voice_mismatch": vres.voice_mismatch,
+                "detector_auc": vres.detector_auc,
+                "detail": vres.detail,
+            })
             await _emit(q, "demo_signals_injected", {
                 "curated": True,
                 "fields": [c.field for c in curated],
@@ -522,11 +554,22 @@ async def investigate_streaming(
         red_team = None
         if verdict_obj.verdict in ("FRAUD_LIKELY", "REVIEW"):
             try:
-                red_team = generate_defense(claims)
+                red_team = generate_defense(claims, verdict=verdict_obj.verdict)
                 await _emit(q, "red_team", {
                     "defense": red_team.get("defense", ""),
                     "track_record": red_team.get("track_record", ""),
                 })
+
+                # Adversarial self-play (#17): Sentinel forges the strongest fake
+                # of this document type and checks whether its own engine catches it.
+                try:
+                    doc_type = "voice_note" if any(
+                        c.field == "voice_mismatch" for c in claims
+                    ) else "invoice"
+                    sp = run_self_play(doc_type)
+                    await _emit(q, "self_play", sp)
+                except Exception as e:
+                    log.warning("self-play failed: %s", e)
             except Exception as e:
                 log.warning("Red team failed: %s", e)
 

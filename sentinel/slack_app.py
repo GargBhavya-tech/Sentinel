@@ -96,12 +96,27 @@ async def on_home_opened(event: dict, client) -> None:
 
     user = event.get("user", "")
     try:
-        cases = await repo.list_cases(limit=25)
+        cases = await repo.list_cases(limit=25, order_by="expected_loss")
     except Exception as e:
         log.warning("home tab: could not load cases: %s", e)
         cases = []
+
+    view = home_view(cases)
+
+    # Campaign clustering (#23) — surface multi-node campaign clusters unprompted
+    # beneath the case triage list.
     try:
-        await client.views_publish(user_id=user, view=home_view(cases))
+        from sentinel.graph.campaign import build_campaign_summary
+
+        summary = build_campaign_summary()
+        if summary.total_clusters:
+            view["blocks"].append({"type": "divider"})
+            view["blocks"].extend(summary.to_slack_blocks())
+    except Exception as e:
+        log.warning("home tab: campaign clustering failed: %s", e)
+
+    try:
+        await client.views_publish(user_id=user, view=view)
     except Exception as e:
         log.warning("home tab: views_publish failed: %s", e)
 

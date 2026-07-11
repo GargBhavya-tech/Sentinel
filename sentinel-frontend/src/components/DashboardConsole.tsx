@@ -9,6 +9,10 @@ import { EvidenceItem, TimelineEvent, AgentStatus } from '../types';
 
 interface DashboardConsoleProps {
   onExit: () => void;
+  // The shared investigation instance from useInvestigation(). Optional: this
+  // console currently runs a self-contained simulation, but App passes the live
+  // instance so a future wiring can drive it from real SSE state.
+  investigation?: ReturnType<typeof import('../hooks/useInvestigation')['useInvestigation']>;
 }
 
 export default function DashboardConsole({ onExit }: DashboardConsoleProps) {

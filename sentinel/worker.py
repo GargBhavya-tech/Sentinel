@@ -236,6 +236,29 @@ async def investigate(event: dict[str, Any]) -> None:
         )
         if evidence_path:
             log.info("Vision analyzing real evidence: %s", picked.get("name"))
+            # File forensics pre-pass (#5) — entropy + post-EOF hidden payloads.
+            try:
+                from sentinel.file_forensics import scan as forensics_scan
+
+                fx = forensics_scan(evidence_path)
+                if fx.suspicious:
+                    payloads = "; ".join(p.preview for p in fx.hidden_payloads) or fx.summary
+                    await app.client.chat_postMessage(
+                        channel=channel,
+                        thread_ts=ts,
+                        text=(
+                            f":microscope: *File forensics* flagged "
+                            f"`{picked.get('name')}` — {fx.summary}. "
+                            f"Hidden content: `{payloads[:200]}`"
+                        ),
+                    )
+                    await repo.append_audit_event(
+                        case_id=case.case_id,
+                        event_type="file_forensics",
+                        payload={"summary": fx.summary},
+                    )
+            except Exception as e:
+                log.warning("file forensics failed: %s", e)
 
     # MCP baseline retrieval — the sender's prior writing, so the stylometric
     # agent has a real fingerprint to compare against (MCP required-tech story).
@@ -378,7 +401,7 @@ async def investigate(event: dict[str, Any]) -> None:
     if verdict_obj.verdict in ("FRAUD_LIKELY", "REVIEW"):
         from sentinel.agents.red_team_agent import generate_defense
 
-        red_team_defense = generate_defense(claims)
+        red_team_defense = generate_defense(claims, verdict=verdict_obj.verdict)
         log.info("Red Team defense generated: %s", red_team_defense["defense"])
 
     # ── 5. Persist agent results ──────────────────────────────────────────────

@@ -81,6 +81,7 @@ async def create_case(
     slack_channel: str,
     slack_ts: str,
     reporter_slack_id: str,
+    amount_at_risk: float = 0.0,
     conn: Optional[psycopg.AsyncConnection] = None,
 ) -> Case:
     """INSERT a new case in 'created' status and return it."""
@@ -88,11 +89,12 @@ async def create_case(
         slack_channel=slack_channel,
         slack_ts=slack_ts,
         reporter_slack_id=reporter_slack_id,
+        amount_at_risk=amount_at_risk,
     )
     sql = """
         INSERT INTO cases
-            (case_id, slack_channel, slack_ts, reporter_slack_id, status)
-        VALUES (%s, %s, %s, %s, %s)
+            (case_id, slack_channel, slack_ts, reporter_slack_id, status, amount_at_risk)
+        VALUES (%s, %s, %s, %s, %s, %s)
         RETURNING created_at, updated_at
     """
     async with _conn() if conn is None else _noop(conn) as c:
@@ -104,6 +106,7 @@ async def create_case(
                 case.slack_ts,
                 case.reporter_slack_id,
                 case.status,
+                case.amount_at_risk,
             ),
         )
         case.created_at = row[0]
@@ -149,6 +152,9 @@ async def get_case(
 
 
 def _row_to_case(row) -> Case:
+    # amount_at_risk is appended as row[9] only by SELECTs that request it
+    # (e.g. list_cases); single-case fetches omit it and it defaults to 0.0.
+    amount = float(row[9]) if len(row) > 9 and row[9] is not None else 0.0
     return Case(
         case_id=str(row[0]),
         slack_channel=row[1],
@@ -157,6 +163,7 @@ def _row_to_case(row) -> Case:
         status=row[4],
         risk_score=float(row[5]) if row[5] is not None else None,
         verdict=row[6],
+        amount_at_risk=amount,
         created_at=row[7],
         updated_at=row[8],
     )
@@ -424,14 +431,26 @@ async def promote_rule(
 
 async def list_cases(
     limit: int = 20,
+    order_by: str = "recent",
     conn=None,
 ) -> list[Case]:
-    """SELECT the most recent cases ordered by created_at DESC."""
-    sql = """
+    """SELECT recent cases.
+
+    order_by:
+      "recent"        → created_at DESC (default)
+      "expected_loss" → risk_score × amount_at_risk DESC (triage by $ exposure, #24)
+    """
+    order_sql = (
+        "ORDER BY (COALESCE(risk_score,0) * COALESCE(amount_at_risk,0)) DESC, "
+        "created_at DESC"
+        if order_by == "expected_loss"
+        else "ORDER BY created_at DESC"
+    )
+    sql = f"""
         SELECT case_id, slack_channel, slack_ts, reporter_slack_id,
-               status, risk_score, verdict, created_at, updated_at
+               status, risk_score, verdict, created_at, updated_at, amount_at_risk
         FROM cases
-        ORDER BY created_at DESC
+        {order_sql}
         LIMIT %s
     """
     async with _conn() if conn is None else _noop(conn) as c:
