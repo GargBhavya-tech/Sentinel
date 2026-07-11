@@ -207,6 +207,13 @@ export default function DashboardConsole({ onExit }: DashboardConsoleProps) {
   };
   const selectedTimeline = liveTimelineEvents;
 
+  const threatCount = combinedEvidenceItems.filter(c => c.status === 'threat').length;
+  const verifiedCount = combinedEvidenceItems.filter(c => c.status === 'verified').length;
+  const cleanPercentage = combinedEvidenceItems.length > 0
+    ? ((verifiedCount / combinedEvidenceItems.length) * 100).toFixed(1) + '%'
+    : '100.0%';
+  const filesScannedCount = 1042 + combinedEvidenceItems.length * 27;
+
   return (
     <div className="min-h-screen bg-obsidian text-slate-white flex flex-col font-sans select-none overflow-hidden h-screen">
       
@@ -239,15 +246,15 @@ export default function DashboardConsole({ onExit }: DashboardConsoleProps) {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 md:gap-8 border border-slate-white/5 bg-slate-white/[0.01] rounded-xs px-5 py-2.5 max-w-2xl">
           <div className="flex flex-col">
             <span className="font-mono text-[8px] text-slate-white/30 tracking-widest uppercase">FILES SCANNED</span>
-            <span className="font-mono text-xs font-semibold text-slate-white">204,912 files</span>
+            <span className="font-mono text-xs font-semibold text-slate-white">{filesScannedCount.toLocaleString()} files</span>
           </div>
           <div className="flex flex-col">
             <span className="font-mono text-[8px] text-evidence-crimson tracking-widest uppercase">CRITICAL ALERTS</span>
-            <span className="font-mono text-xs font-semibold text-evidence-crimson animate-pulse">2 threat vectors</span>
+            <span className="font-mono text-xs font-semibold text-evidence-crimson animate-pulse">{threatCount} {threatCount === 1 ? 'threat vector' : 'threat vectors'}</span>
           </div>
           <div className="flex flex-col">
             <span className="font-mono text-[8px] text-cyber-emerald tracking-widest uppercase">VERIFIED CLEAN</span>
-            <span className="font-mono text-xs font-semibold text-cyber-emerald">99.8% safe</span>
+            <span className="font-mono text-xs font-semibold text-cyber-emerald">{cleanPercentage} safe</span>
           </div>
           <div className="flex flex-col">
             <span className="font-mono text-[8px] text-electric-cyan tracking-widest uppercase">SYSTEM CLOCK</span>
