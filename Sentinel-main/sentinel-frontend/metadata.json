@@ -1,6 +1,5 @@
 {
   "name": "Sentinel",
   "description": "Multi-agent fraud investigation platform that uncovers contradictions across documents, voice, spreadsheets, and communication channels.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": []
 }

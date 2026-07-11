@@ -33,6 +33,7 @@ class Case:
     status: str = "created"
     risk_score: Optional[float] = None
     verdict: Optional[str] = None
+    amount_at_risk: float = 0.0
     created_at: Any = None
     updated_at: Any = None
 
@@ -90,12 +91,13 @@ def _sha256(s: str) -> str:
 
 # ── Cases ──────────────────────────────────────────────────────────────────────
 
-async def create_case(slack_channel="C_DEMO", slack_ts="", reporter_slack_id="U_DEMO", conn=None) -> Case:
-    c = Case(slack_channel=slack_channel, slack_ts=slack_ts or str(uuid.uuid4()), reporter_slack_id=reporter_slack_id)
+async def create_case(slack_channel="C_DEMO", slack_ts="", reporter_slack_id="U_DEMO", amount_at_risk=0.0, conn=None) -> Case:
+    c = Case(slack_channel=slack_channel, slack_ts=slack_ts or str(uuid.uuid4()), reporter_slack_id=reporter_slack_id, amount_at_risk=amount_at_risk)
     _cases[c.case_id] = {
         "case_id": c.case_id, "slack_channel": c.slack_channel,
         "slack_ts": c.slack_ts, "reporter_slack_id": c.reporter_slack_id,
         "status": c.status, "risk_score": None, "verdict": None,
+        "amount_at_risk": c.amount_at_risk,
         "created_at": c.created_at, "updated_at": c.updated_at,
     }
     return c
@@ -112,11 +114,14 @@ async def get_case(case_id, conn=None) -> Optional[Case]:
     d = _cases.get(case_id)
     if not d:
         return None
-    return Case(**{k: d[k] for k in ("case_id", "slack_channel", "slack_ts", "reporter_slack_id", "status", "risk_score", "verdict", "created_at", "updated_at")})
+    return Case(**{k: d.get(k) for k in ("case_id", "slack_channel", "slack_ts", "reporter_slack_id", "status", "risk_score", "verdict", "amount_at_risk", "created_at", "updated_at") if d.get(k) is not None})
 
-async def list_cases(limit=20, conn=None) -> list[Case]:
-    all_cases = sorted(_cases.values(), key=lambda c: c.get("created_at", 0), reverse=True)
-    return [Case(**{k: d[k] for k in ("case_id", "slack_channel", "slack_ts", "reporter_slack_id", "status", "risk_score", "verdict", "created_at", "updated_at")}) for d in all_cases[:limit]]
+async def list_cases(limit=20, order_by="recent", conn=None) -> list[Case]:
+    if order_by == "expected_loss":
+        all_cases = sorted(_cases.values(), key=lambda c: (c.get("risk_score") or 0) * (c.get("amount_at_risk") or 0), reverse=True)
+    else:
+        all_cases = sorted(_cases.values(), key=lambda c: c.get("created_at", 0), reverse=True)
+    return [Case(**{k: d.get(k) for k in ("case_id", "slack_channel", "slack_ts", "reporter_slack_id", "status", "risk_score", "verdict", "amount_at_risk", "created_at", "updated_at") if d.get(k) is not None}) for d in all_cases[:limit]]
 
 # ── Evidence ───────────────────────────────────────────────────────────────────
 
