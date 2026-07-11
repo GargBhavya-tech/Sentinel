@@ -6,6 +6,7 @@ import {
   TrendingUp, RefreshCw, ChevronRight, Terminal, Network, ArrowLeft, Send
 } from 'lucide-react';
 import { EvidenceItem, TimelineEvent, AgentStatus } from '../types';
+import { listCases, getCaseAudit } from '../api/sentinel';
 
 interface DashboardConsoleProps {
   onExit: () => void;
@@ -20,6 +21,74 @@ export default function DashboardConsole({ onExit }: DashboardConsoleProps) {
   const [selectedCaseId, setSelectedCaseId] = useState('SENT-109A');
   const [newNote, setNewNote] = useState('');
   const [currentTime, setCurrentTime] = useState('10:24:02 UTC');
+
+  const [liveCases, setLiveCases] = useState<any[]>([]);
+  const [liveTimelineEvents, setLiveTimelineEvents] = useState<TimelineEvent[]>([]);
+
+  // Poll live cases from API
+  useEffect(() => {
+    let active = true;
+    const fetchLiveCases = async () => {
+      try {
+        const data = await listCases();
+        if (active) {
+          setLiveCases(data.cases || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch live cases:', err);
+      }
+    };
+    fetchLiveCases();
+    const interval = setInterval(fetchLiveCases, 3000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Poll timeline events for selected live case
+  useEffect(() => {
+    if (!selectedCaseId || selectedCaseId.startsWith('SENT-')) {
+      setLiveTimelineEvents([]);
+      return;
+    }
+    let active = true;
+    const fetchAudit = async () => {
+      try {
+        const data = await getCaseAudit(selectedCaseId);
+        if (active) {
+          const events: TimelineEvent[] = (data.entries || []).map((entry: any, index: number) => {
+            let desc = '';
+            if (entry.payload) {
+              if (entry.payload.reason) desc = String(entry.payload.reason);
+              else if (entry.payload.summary) desc = String(entry.payload.summary);
+              else if (entry.payload.description) desc = String(entry.payload.description);
+              else if (entry.payload.verdict) desc = `Verdict: ${entry.payload.verdict}`;
+              else desc = JSON.stringify(entry.payload);
+            }
+            return {
+              id: `audit-${entry.entry_id || index}`,
+              timestamp: new Date(entry.created_at).toLocaleTimeString() + ' UTC',
+              title: entry.event_type.replace(/_/g, ' ').toUpperCase(),
+              type: (entry.event_type === 'verdict' && entry.payload?.verdict === 'FRAUD_LIKELY' ? 'threat' : 'info') as any,
+              description: desc,
+              sourceId: selectedCaseId,
+              agentName: String(entry.payload?.agent || 'system')
+            };
+          });
+          setLiveTimelineEvents(events);
+        }
+      } catch (err) {
+        console.error('Failed to fetch case audit:', err);
+      }
+    };
+    fetchAudit();
+    const interval = setInterval(fetchAudit, 3000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [selectedCaseId]);
 
   // Real-time ticking UTC Clock (Simulated enterprise standard)
   useEffect(() => {
@@ -184,15 +253,33 @@ export default function DashboardConsole({ onExit }: DashboardConsoleProps) {
     setNewNote('');
   };
 
+  // Combined list of live database cases and pre-loaded mock cases
+  const combinedEvidenceItems: EvidenceItem[] = [
+    ...liveCases.map(c => ({
+      id: c.case_id,
+      type: 'thread' as const,
+      title: `Slack Case #${c.short_id}`,
+      source: `Slack Event`,
+      status: (c.verdict === 'FRAUD_LIKELY' ? 'threat' : c.verdict === 'REVIEW' ? 'suspicious' : c.verdict === 'CLEAR' ? 'verified' : 'unverified') as any,
+      timestamp: c.created_at,
+      description: `Slack triggered investigation. Current status: ${c.status}`,
+      content: `Status: ${c.status}\nVerdict: ${c.verdict || 'PENDING'}\nRisk Score: ${c.risk_score !== null ? (c.risk_score * 100).toFixed(1) + '%' : 'N/A'}\nAmount at Risk: $${c.amount_at_risk.toLocaleString()}`,
+      confidence: c.risk_score !== null ? Math.round(c.risk_score * 100) : 0,
+    })),
+    ...evidenceItems
+  ];
+
   // Filter evidence lists
-  const filteredEvidence = evidenceItems.filter(item => 
+  const filteredEvidence = combinedEvidenceItems.filter(item => 
     item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
     item.source.toLowerCase().includes(searchTerm.toLowerCase()) ||
     item.id.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const selectedCase = evidenceItems.find(item => item.id === selectedCaseId) || evidenceItems[0];
-  const selectedTimeline = timelineEvents.filter(e => e.sourceId === selectedCaseId);
+  const selectedCase = combinedEvidenceItems.find(item => item.id === selectedCaseId) || combinedEvidenceItems[0];
+  const selectedTimeline = selectedCaseId.startsWith('SENT-') 
+    ? timelineEvents.filter(e => e.sourceId === selectedCaseId)
+    : liveTimelineEvents;
 
   return (
     <div className="min-h-screen bg-obsidian text-slate-white flex flex-col font-sans select-none overflow-hidden h-screen">
