@@ -156,13 +156,19 @@ class LabelRequest(BaseModel):
 @api.post("/slack/events")
 async def slack_events(req: Request, background_tasks: BackgroundTasks) -> Response:
     """Receive Slack webhook, ACK <5ms, queue background work."""
+    # Read the body ONCE, before Bolt consumes the request stream. Starlette
+    # caches the body after the first read, so Bolt's handler still sees it for
+    # signature verification. Reading it twice (the old order) was fragile and
+    # order-dependent.
+    body: dict = {}
+    if req.headers.get("content-type") == "application/json":
+        try:
+            body = await req.json()
+        except Exception:  # malformed / empty body — let Bolt reject it
+            body = {}
+
     bolt_resp = await handler.handle(req)
 
-    body = (
-        await req.json()
-        if req.headers.get("content-type") == "application/json"
-        else {}
-    )
     event = body.get("event", {})
     if (
         event.get("type") == "app_mention"
@@ -241,12 +247,10 @@ async def start_investigation(
     description = body.description
     amount = body.amount_at_risk
     if body.demo_case:
-        description = (
-            "Cloned CEO voice note requesting urgent wire transfer of $1,450,000 "
-            "to routing number RT_912000031 at offshore Belize entity. "
-            "Invoice total mismatch detected. VPN geolocation mismatch."
-        )
-        amount = 1_450_000.0
+        from sentinel.demo_fixtures import DEMO_DESCRIPTION, DEMO_AMOUNT
+
+        description = DEMO_DESCRIPTION
+        amount = DEMO_AMOUNT
 
     # Resolve an uploaded file (evidence_id) to its stored path; fall back to a
     # directly-supplied file_url. The worker's download_evidence handles both.
@@ -266,6 +270,7 @@ async def start_investigation(
         channel=body.channel,
         reporter=body.reporter,
         file_url=file_ref,
+        demo_case=body.demo_case,
     )
 
     return {

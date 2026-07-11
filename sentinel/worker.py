@@ -45,6 +45,7 @@ from sentinel.agents import (
     policy_agent,
 )
 from sentinel.claims import Claim
+from sentinel.agents.harvest import harvest_claims
 from sentinel.rules.synthesizer import synthesize_rule
 from sentinel.recall import recall as temporal_recall
 from sentinel.slack_ui import verdict_action_blocks, create_case_canvas
@@ -236,12 +237,19 @@ async def investigate(event: dict[str, Any]) -> None:
         if evidence_path:
             log.info("Vision analyzing real evidence: %s", picked.get("name"))
 
+    # MCP baseline retrieval — the sender's prior writing, so the stylometric
+    # agent has a real fingerprint to compare against (MCP required-tech story).
+    from sentinel.mcp_baseline import fetch_writing_baseline
+
+    baseline_samples = await fetch_writing_baseline(reporter, channel=channel)
+
     # Run all agents concurrently using asyncio.to_thread
     agent_tasks = [
         asyncio.to_thread(vision_agent.analyze, case.case_id, evidence_path),
         asyncio.to_thread(finance_agent.analyze, case.case_id),
         asyncio.to_thread(
-            stylometric_agent.analyze, case.case_id, reporter, stylo_text
+            stylometric_agent.analyze, case.case_id, reporter, stylo_text,
+            baseline_samples=baseline_samples or None,
         ),
         asyncio.to_thread(voice_agent.analyze, case.case_id, reporter),
         asyncio.to_thread(nlp_agent.analyze, case.case_id, stylo_text),
@@ -259,8 +267,11 @@ async def investigate(event: dict[str, Any]) -> None:
     for res in results:
         if isinstance(res, Exception):
             log.error("Agent failed: %s", res)
-        elif hasattr(res, "to_claims"):
-            claims.extend(res.to_claims())
+            continue
+        # harvest_claims handles BOTH to_claims() (plural) and to_claim()
+        # (singular) — the latter is what Voice/Stylometric/Policy expose, and
+        # was previously dropped, disabling the voice + tone contradiction axes.
+        claims.extend(harvest_claims(res))
 
     # If the event contains file attachments, store them as evidence stubs.
     for f in event.get("files", []):

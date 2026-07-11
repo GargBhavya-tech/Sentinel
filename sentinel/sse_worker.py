@@ -49,6 +49,7 @@ from sentinel.agents.red_team_agent import generate_defense
 from sentinel.agents.adversarial_agent import run_self_play
 from sentinel.agents.honeypot_agent import run_honeypot
 from sentinel.claims import Claim
+from sentinel.agents.harvest import harvest_claims
 from sentinel.ingest import download_evidence, cleanup_evidence
 from sentinel.rules.synthesizer import synthesize_rule
 from sentinel.rules.schema import Rule
@@ -131,13 +132,47 @@ def _check_silence(claims: list[Claim]) -> tuple[bool, str]:
     """Return (should_silence, reason) — True if evidence is too thin."""
     non_null_claims = [c for c in claims if c.value is not None]
     if len(non_null_claims) < 2:
+        missing = _missing_modalities(claims)
+        ask = (
+            " I have "
+            + (", ".join(_present_modalities(claims)) or "nothing usable")
+            + ". To cross-examine, send me "
+            + " or ".join(missing[:3])
+            + "."
+        )
         return True, (
             "Insufficient evidence: fewer than 2 agents returned usable signal. "
-            "Sentinel needs at least a document + one other modality to cross-examine. "
-            "Please provide: the original invoice/document AND either a voice note, "
-            "email thread, or transaction CSV."
+            "Sentinel needs at least two independent modalities to cross-examine."
+            + ask
         )
     return False, ""
+
+
+# Which contradiction-relevant modalities produced a usable signal.
+_MODALITY_FIELDS = {
+    "the invoice/document total": ("visual_total", "structured_total"),
+    "a voice note": ("voice_mismatch",),
+    "a writing sample for the sender": ("tone_anomaly",),
+    "the sender domain": ("domain_age_days",),
+}
+
+
+def _present_modalities(claims: list[Claim]) -> list[str]:
+    present_fields = {c.field for c in claims if c.value is not None}
+    return [
+        label
+        for label, fields in _MODALITY_FIELDS.items()
+        if present_fields.intersection(fields)
+    ]
+
+
+def _missing_modalities(claims: list[Claim]) -> list[str]:
+    present_fields = {c.field for c in claims if c.value is not None}
+    return [
+        label
+        for label, fields in _MODALITY_FIELDS.items()
+        if not present_fields.intersection(fields)
+    ]
 
 
 # ── Main SSE investigation worker ──────────────────────────────────────────────
@@ -150,6 +185,7 @@ async def investigate_streaming(
     channel: str = "C_DEMO",
     reporter: str = "U_DEMO",
     file_url: str | None = None,
+    demo_case: bool = False,
 ) -> None:
     """Run the full Sentinel investigation, emitting SSE events into q.
 
@@ -216,11 +252,24 @@ async def investigate_streaming(
         _dm = _DOMAIN_RE.search(event_text or "")
         domain_to_scan = _dm.group(1) if _dm else "example.com"
 
+        # MCP baseline retrieval — pull the sender's prior writing so the
+        # stylometric agent has a real fingerprint to compare against. This is
+        # the MCP required-tech story; falls back to a curated seed with no token.
+        from sentinel.mcp_baseline import fetch_writing_baseline
+        baseline_samples = await fetch_writing_baseline(reporter, channel=channel)
+        if baseline_samples:
+            await _emit(q, "mcp_baseline", {
+                "user": reporter,
+                "sample_count": len(baseline_samples),
+                "source": "slack_search" if len(baseline_samples) > 3 else "curated",
+            })
+
         agent_tasks = {
             "vision": asyncio.to_thread(vision_agent.analyze, case_id, evidence_path),
             "finance": asyncio.to_thread(finance_agent.analyze, case_id),
             "stylometric": asyncio.to_thread(
-                stylometric_agent.analyze, case_id, reporter, event_text
+                stylometric_agent.analyze, case_id, reporter, event_text,
+                baseline_samples=baseline_samples or None,
             ),
             "voice": asyncio.to_thread(voice_agent.analyze, case_id, reporter),
             "threat_intel": asyncio.to_thread(
@@ -270,15 +319,16 @@ async def investigate_streaming(
                             "should_file_sar": result.should_file_sar,
                             "answer": result.answer[:150],
                         }
-                    elif hasattr(result, "to_claims"):
-                        agent_claims = result.to_claims()
+                    else:
+                        # harvest_claims handles BOTH to_claims() (plural) and
+                        # to_claim() (singular). Voice/Stylometric/Policy use the
+                        # singular form and were previously dropped here.
+                        agent_claims = harvest_claims(result)
                         claims.extend(agent_claims)
                         claims_payload = {
                             "claim_count": len(agent_claims),
                             "fields": [c.field for c in agent_claims],
                         }
-                    else:
-                        claims_payload = {}
 
                     await _emit(q, "agent_complete", {
                         "agent_id": agent_name,
@@ -300,6 +350,23 @@ async def investigate_streaming(
                         "error": str(e)[:120],
                         "claims": {},
                     })
+
+        # ── 4a. Curated demo signals ─────────────────────────────────────────
+        # For the flagship demo, inject the curated cross-modal evidence the
+        # live agents cannot produce without a real audio clip + writing
+        # baseline. Appended last so they win the field key in the reconciler.
+        # Honestly labelled as curated (Master Reference §13).
+        if demo_case:
+            from sentinel.demo_fixtures import demo_claims
+
+            curated = demo_claims(case_id)
+            claims.extend(curated)
+            await _emit(q, "demo_signals_injected", {
+                "curated": True,
+                "fields": [c.field for c in curated],
+                "note": "Curated demo evidence (real-clip-vs-cloned-clip pair) — "
+                        "flows through the same deterministic reconciler.",
+            })
 
         # ── 4b. Temporal recall — with the real agent claims (#21) ────────────
         claims_dict = {c.field: c.value for c in claims}
@@ -330,10 +397,16 @@ async def investigate_streaming(
                 "reason": silence_reason,
                 "verdict": "NEED_MORE_INFO",
                 "risk": 0.0,
+                "missing": _missing_modalities(claims),
             })
-            await repo.update_case_status(
-                case_id, status="verdict", risk_score=0.0, verdict="NEED_MORE_INFO"
-            )
+            try:
+                await repo.update_case_status(
+                    case_id, status="verdict", risk_score=0.0, verdict="NEED_MORE_INFO"
+                )
+            except Exception as e:
+                # Requires migration 002 for the NEED_MORE_INFO CHECK value.
+                # Never let a persistence hiccup abort the stream.
+                log.warning("Could not persist NEED_MORE_INFO verdict: %s", e)
             await _emit(q, "stream_end", {"case_id": case_id})
             return
 

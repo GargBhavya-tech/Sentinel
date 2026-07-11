@@ -95,7 +95,7 @@ def reconcile(claims: list[Claim]) -> Verdict:
         )
 
     domain_age = _get(by_field, "domain_age_days")
-    if domain_age is not None and domain_age <= DOMAIN_YOUNG_DAYS and contradictions:
+    if domain_age is not None and 0 <= domain_age <= DOMAIN_YOUNG_DAYS and contradictions:
         contradictions.append(
             Contradiction(
                 axis="young_domain",
@@ -174,7 +174,7 @@ def _solo_extreme(by_field) -> Optional[Contradiction]:
             [p for p in (_ptr(by_field, "voice_mismatch"),) if p],
         )
     domain_age = _get(by_field, "domain_age_days")
-    if domain_age is not None and domain_age <= SOLO_DOMAIN_DAYS:
+    if domain_age is not None and 0 <= domain_age <= SOLO_DOMAIN_DAYS:
         return Contradiction(
             "young_domain",
             f"Sender domain registered {domain_age} day(s) ago",
