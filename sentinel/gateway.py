@@ -489,6 +489,17 @@ async def audit_verify() -> dict:
     return {"intact": ok, "message": message}
 
 
+# ── Mount Frontend ────────────────────────────────────────────────────────────
+
+from fastapi.staticfiles import StaticFiles
+
+_frontend_dir = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "sentinel-frontend", "dist"
+)
+if os.path.exists(_frontend_dir):
+    api.mount("/", StaticFiles(directory=_frontend_dir, html=True), name="frontend")
+
+
 # ── Dev entrypoint ────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
