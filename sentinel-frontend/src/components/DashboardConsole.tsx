@@ -112,46 +112,7 @@ export default function DashboardConsole({ onExit }: DashboardConsoleProps) {
     return () => clearInterval(timer);
   }, []);
 
-  // Live Agent simulation state
-  const [agents, setAgents] = useState<AgentStatus[]>([
-    { id: 'ag-1', name: 'Speech_Synapse_Agent', role: 'Acoustic Forensics', status: 'analyzing', currentTask: 'Comparing acoustic resonances with CEO voiceprint', progress: 42 },
-    { id: 'ag-2', name: 'Document_Structure_Agent', role: 'Metadata & Integrity', status: 'idle', currentTask: 'Awaiting ledger feeds', progress: 100 },
-    { id: 'ag-3', name: 'Geo_Tunnel_Agent', role: 'Geographic Cross-Ex', status: 'analyzing', currentTask: 'Mapping IP routing nodes against verified geo-profiles', progress: 78 },
-    { id: 'ag-4', name: 'Ledger_Integrity_Agent', role: 'Transaction Audit', status: 'alert', currentTask: 'Routing RT_912000031 mismatch identified', progress: 100 },
-  ]);
 
-  // Simulate agent progress and status shifting in real time
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setAgents(prev => prev.map(agent => {
-        if (agent.status === 'analyzing') {
-          const nextProgress = agent.progress + Math.floor(Math.random() * 8) + 2;
-          if (nextProgress >= 100) {
-            return {
-              ...agent,
-              status: 'complete',
-              progress: 100,
-              currentTask: 'Analysis verified. Verdict logged to Central Synapse.'
-            };
-          }
-          return { ...agent, progress: nextProgress };
-        } else if (agent.status === 'complete') {
-          // Restart after some time
-          if (Math.random() > 0.7) {
-            return {
-              ...agent,
-              status: 'analyzing',
-              progress: 0,
-              currentTask: agent.id === 'ag-1' ? 'Ingesting CALL_RECORD_B2.wav print' : 'Tracing geo coordinates on network packet #091'
-            };
-          }
-        }
-        return agent;
-      }));
-    }, 1200);
-
-    return () => clearInterval(interval);
-  }, []);
 
   // Set default selected case when cases load
   useEffect(() => {
@@ -263,37 +224,7 @@ export default function DashboardConsole({ onExit }: DashboardConsoleProps) {
         </div>
       </header>
 
-      {/* 2. Live Agent Synapse Monitor Strip */}
-      <section className="bg-obsidian border-b border-slate-white/5 px-6 py-2 shrink-0 flex items-center justify-between overflow-x-auto no-scrollbar gap-6">
-        <div className="flex items-center gap-2 shrink-0">
-          <Activity className="w-3.5 h-3.5 text-electric-cyan animate-pulse" />
-          <span className="font-mono text-[9px] text-electric-cyan font-bold tracking-widest uppercase">ACTIVE AGENTS WORKFORCE:</span>
-        </div>
-        
-        <div className="flex items-center gap-8 min-w-0 flex-1 pl-4">
-          {agents.map((agent) => (
-            <div key={agent.id} className="flex flex-col min-w-[200px] flex-1 max-w-[280px]">
-              <div className="flex justify-between items-center mb-1">
-                <span className="font-mono text-[9px] text-slate-white/60 truncate font-semibold">
-                  {agent.name}
-                </span>
-                <span className={`font-mono text-[8px] tracking-widest ${agent.status === 'alert' ? 'text-evidence-crimson' : agent.status === 'analyzing' ? 'text-electric-cyan animate-pulse' : 'text-slate-white/30'}`}>
-                  {agent.status.toUpperCase()}
-                </span>
-              </div>
-              <div className="w-full bg-slate-white/5 h-1 rounded-full overflow-hidden mb-0.5">
-                <div 
-                  className={`h-full ${agent.status === 'alert' ? 'bg-evidence-crimson' : agent.status === 'complete' ? 'bg-cyber-emerald' : 'bg-electric-cyan'}`} 
-                  style={{ width: `${agent.progress}%`, transition: 'width 0.8s ease-out' }} 
-                />
-              </div>
-              <span className="font-mono text-[8px] text-slate-white/30 truncate block">
-                {agent.currentTask}
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
+
 
       {/* 3. Three-column Operations layout */}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 relative">

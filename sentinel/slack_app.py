@@ -173,6 +173,17 @@ async def on_quarantine(ack, body, client) -> None:
             reason="Analyst quarantine via Slack verdict card",
             quarantined_by=user,
         )
+        from sentinel.db import repo
+        await repo.append_audit_event(
+            case_id=case_id,
+            event_type="quarantine",
+            payload={
+                "description": f"Quarantined {len(node_ids)} network nodes",
+                "nodes": node_ids,
+                "reason": "Analyst quarantine via Slack verdict card",
+                "agent": f"slack_action_{user[:8]}",
+            },
+        )
         await client.chat_postMessage(
             channel=channel,
             thread_ts=ts,
