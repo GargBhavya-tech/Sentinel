@@ -50,6 +50,14 @@ _DEMO_SEED: dict[str, dict] = {
         "registrar": "NameCheap Inc.",
         "cached_at": 0,  # always "fresh" in demo
     },
+    # A brand-new domain (1 day old) to trigger solo extreme threat logic
+    "new-wire-transfer.com": {
+        "domain_age_days": 1,
+        "vt_malicious": 0,
+        "vt_suspicious": 0,
+        "registrar": "NameCheap Inc.",
+        "cached_at": 0,
+    },
     # A known-good domain
     "acmecorp.com": {
         "domain_age_days": 3650,
